@@ -16,6 +16,7 @@ from harborline.config import Settings, get_settings
 from harborline.ingest import load_chunks
 
 POLICY_ID_RE = re.compile(r"POL-[A-Z]+-\d{3}", re.I)
+PRIMARY_POLICY_RE = re.compile(r"Policy ID:\*+\s*(POL-[A-Z]+-\d{3})\b", re.I)
 MONEY_RE = re.compile(r"\$\s?(\d+(?:,\d{3})*(?:\.\d+)?)")
 
 # Session-only mocks. Never written to data/*.json or a live HRIS.
@@ -78,50 +79,68 @@ def search_policy_documents(
     }
 
 
+def _declared_policy_id(chunk) -> str | None:
+    """Policy ID line in the document header, not a cross-reference in Related:."""
+    match = PRIMARY_POLICY_RE.search(chunk.text[:1200])
+    return match.group(1).upper() if match else None
+
+
+def _section_payload(matched: list, pid: str, heading: str) -> dict:
+    return {
+        "tool": "get_policy_section",
+        "found": True,
+        "policy_id": pid,
+        "section": heading or None,
+        "sections": [
+            {
+                "chunk_id": c.chunk_id,
+                "title": c.title,
+                "section": c.section,
+                "source_path": c.source_path,
+                "snippet": c.snippet,
+                "text": c.text[:1200],
+            }
+            for c in matched
+        ],
+    }
+
+
 def get_policy_section(
     policy_id: str,
     section: str = "",
     settings: Settings | None = None,
     retriever: object | None = None,
 ) -> dict:
-    """Return indexed chunks for a policy ID (and optional heading), falling back to RAG."""
+    """Return chunks from the document that declares this policy ID.
+
+    Heading match uses the section title only. A mention of the same words in
+    another policy (or in a Related: line) does not count, so repeated calls
+    return the same sections.
+    """
     settings = settings or get_settings()
     pid = (policy_id or "").strip().upper()
     heading = (section or "").strip()
     chunks = [c for c in load_chunks(settings) if c.kind == "policy"]
-    ids_by_source: dict[str, set[str]] = {}
-    for chunk in chunks:
-        ids_by_source.setdefault(chunk.source_path, set()).update(
-            m.group(0).upper() for m in POLICY_ID_RE.finditer(f"{chunk.title}\n{chunk.section}\n{chunk.text}")
-        )
-    matched = []
-    for chunk in chunks:
-        source_ids = ids_by_source.get(chunk.source_path, set())
-        if pid and pid not in source_ids and pid.lower() not in chunk.source_path.lower():
-            continue
-        if heading and heading.lower() not in chunk.section.lower() and heading.lower() not in chunk.text[:400].lower():
-            continue
-        matched.append(chunk)
-        if len(matched) >= 8:
-            break
+    owners: set[str] = set()
+    if pid:
+        seen_header: set[str] = set()
+        for chunk in chunks:
+            if chunk.source_path in seen_header:
+                continue
+            declared = _declared_policy_id(chunk)
+            if declared is None:
+                continue
+            seen_header.add(chunk.source_path)
+            if declared == pid:
+                owners.add(chunk.source_path)
+    owned = [c for c in chunks if c.source_path in owners] if owners else []
+    if heading:
+        headed = [c for c in owned if heading.lower() in (c.section or "").lower()]
+    else:
+        headed = []
+    matched = (headed or owned)[:8]
     if matched:
-        return {
-            "tool": "get_policy_section",
-            "found": True,
-            "policy_id": pid,
-            "section": heading or None,
-            "sections": [
-                {
-                    "chunk_id": c.chunk_id,
-                    "title": c.title,
-                    "section": c.section,
-                    "source_path": c.source_path,
-                    "snippet": c.snippet,
-                    "text": c.text[:1200],
-                }
-                for c in matched
-            ],
-        }
+        return _section_payload(matched, pid, heading)
     query = " ".join(part for part in (pid, heading) if part) or "Harborline policy"
     hits, rewritten = retrieve_hits(query, kind="policy", settings=settings, retriever=retriever)
     return {
