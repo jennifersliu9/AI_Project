@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from harborline.agent import run_agent
 from harborline.answer import ask
 from harborline.config import get_settings
+from harborline.demos import DEMOS, get_demo
 from harborline.evaluate import run_eval
 from harborline.retrieve import build_retriever
 
@@ -21,33 +22,6 @@ app = FastAPI(title="Harborline People Desk", version="0.1.0")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 _retriever = None
-
-DEMOS = [
-    {
-        "id": "remote-emp-1008",
-        "label": "Remote eligibility — EMP-1008",
-        "query": "Am I eligible for fully remote work living in Tacoma?",
-        "employee_id": "EMP-1008",
-        "curl": (
-            'curl -X POST http://127.0.0.1:8000/chat '
-            '-H "Content-Type: application/json" '
-            '-d "{\\"query\\":\\"Am I eligible for fully remote work living in Tacoma?\\",'
-            '\\"employee_id\\":\\"EMP-1008\\"}"'
-        ),
-    },
-    {
-        "id": "pto-emp-1014",
-        "label": "PTO guidance — EMP-1014",
-        "query": "Can I take PTO next week?",
-        "employee_id": "EMP-1014",
-        "curl": (
-            'curl -X POST http://127.0.0.1:8000/chat '
-            '-H "Content-Type: application/json" '
-            '-d "{\\"query\\":\\"Can I take PTO next week?\\",\\"employee_id\\":\\"EMP-1014\\"}"'
-        ),
-    },
-]
-
 
 def get_retriever():
     global _retriever
@@ -136,21 +110,36 @@ def health() -> dict:
 
 @app.get("/demos")
 def demos() -> dict:
-    return {"demos": DEMOS}
+    return {"demos": [demo.as_dict() for demo in DEMOS]}
 
 
-@app.post("/chat")
-def chat_endpoint(body: ChatRequest) -> dict:
+def _run_chat(query: str, employee_id: str | None, confirm: bool, transport: str) -> dict:
     try:
         result = run_agent(
-            body.query,
-            employee_id=body.employee_id,
-            confirm=body.confirm,
-            transport=body.transport,
+            query,
+            employee_id=employee_id,
+            confirm=confirm,
+            transport=transport,
         )
     except Exception as exc:  # noqa: BLE001
         raise HTTPException(status_code=500, detail=str(exc)) from exc
     return _chat_payload(result)
+
+
+@app.post("/demos/{demo_id}")
+def run_demo(demo_id: str) -> dict:
+    demo = get_demo(demo_id)
+    if demo is None:
+        known = ", ".join(item.id for item in DEMOS)
+        raise HTTPException(status_code=404, detail=f"Unknown demo {demo_id!r}. Known: {known}.")
+    payload = _run_chat(demo.query, demo.employee_id, confirm=False, transport="mcp-inproc")
+    payload["demo_id"] = demo.id
+    return payload
+
+
+@app.post("/chat")
+def chat_endpoint(body: ChatRequest) -> dict:
+    return _run_chat(body.query, body.employee_id, body.confirm, body.transport)
 
 
 @app.post("/ask")

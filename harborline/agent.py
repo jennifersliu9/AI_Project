@@ -328,6 +328,16 @@ def _collect_sources(*payloads: dict) -> list[dict]:
     return sources
 
 
+def _canonical_sections(*payloads: dict) -> list[dict]:
+    """Sections from the declaring policy document, ignoring RAG fallbacks."""
+    sections: list[dict] = []
+    for payload in payloads:
+        if payload.get("fallback") == "rag" or not payload.get("found"):
+            continue
+        sections.extend(payload.get("sections") or [])
+    return sections
+
+
 def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | None) -> None:
     if not eid:
         result.needs_clarification = True
@@ -359,6 +369,16 @@ def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | Non
             kind="policy",
         ),
     )
+    section = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-RMT-003", "section": "Location categories"},
+        bus.call(
+            "get_policy_section",
+            policy_id="POL-RMT-003",
+            section="Location categories",
+        ),
+    )
     compliance = _record(
         result,
         "check_policy_compliance",
@@ -370,7 +390,7 @@ def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | Non
             policy_id="POL-RMT-003",
         ),
     )
-    result.sources = _collect_sources(search, compliance)
+    result.sources = _canonical_sections(section) or _collect_sources(search, compliance)
     emp = lookup["employee"]
     cat = emp.get("location_category")
     miles = emp.get("miles_from_assigned_hub")
@@ -597,7 +617,19 @@ def _run_benefits(result: AgentResult, bus: McpToolBus, query: str, eid: str | N
             kind="policy",
         ),
     )
-    result.sources = _collect_sources(search)
+    medical = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-BEN-006", "section": "US medical"},
+        bus.call("get_policy_section", policy_id="POL-BEN-006", section="US medical"),
+    )
+    retirement = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-BEN-006", "section": "Retirement"},
+        bus.call("get_policy_section", policy_id="POL-BEN-006", section="Retirement"),
+    )
+    result.sources = _canonical_sections(medical, retirement) or _collect_sources(search)
     extra = ""
     if eid:
         benefits = _record(

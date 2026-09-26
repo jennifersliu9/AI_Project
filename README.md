@@ -177,17 +177,24 @@ Run ingest first, then:
 uvicorn harborline.api:app --reload --port 8000
 ```
 
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** for the People Desk chat UI. Use the two grader demo buttons, or POST `/chat`.
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** for the People Desk chat UI. The two demo buttons load `GET /demos` and run `POST /demos/{id}`. The same questions also work on `POST /chat`.
 
 ```powershell
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/demos
+curl -X POST http://127.0.0.1:8000/demos/remote-emp-1008
+curl -X POST http://127.0.0.1:8000/demos/benefits-emp-1008
 curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"Am I eligible for fully remote work living in Tacoma?\",\"employee_id\":\"EMP-1008\"}"
-curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"Can I take PTO next week?\",\"employee_id\":\"EMP-1014\"}"
+curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "{\"query\":\"What medical plan and 401k deferral do I have?\",\"employee_id\":\"EMP-1008\"}"
 curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" -d "{\"query\":\"When does the 401k match vest?\"}"
 ```
 
-`GET /health` reports `app` plus `mcp.available` and discovered tool names. `POST /chat` runs the MCP orchestrator and returns `answer`, `citations`, `snippets`, and `trace`. `POST /ask` is retrieve-only (no agent).
+`GET /health` reports `app` plus `mcp.available` and discovered tool names. `POST /demos/{id}` and `POST /chat` run the MCP orchestrator and return `answer`, `citations`, `snippets`, and `trace`. Repeating a demo returns the same answer and the same policy file in every citation. `POST /ask` is retrieve-only (no agent).
+
+| Demo | What it does | Tools |
+| --- | --- | --- |
+| `remote-emp-1008` | Alex Kim (Tacoma, hub) asks about fully remote work | `lookup_employee_profile`, `search_policy_documents`, `get_policy_section` (POL-RMT-003), `check_policy_compliance` |
+| `benefits-emp-1008` | Alex Kim's medical plan and 401(k) deferral | `search_policy_documents`, `get_policy_section` (POL-BEN-006 medical and retirement), `lookup_benefits_status` |
 
 ## Evaluation
 
@@ -299,16 +306,17 @@ The CLI agent does **not** need Cursor Settings. Default transport is stdio (`py
 
 `python -m harborline.cli agent` interprets intent, decides whether RAG alone is enough, calls **MCP-exposed** tools, and prints a **visible operational trace** (discovered tools, selected tools, arguments, output summaries, retrieved sources, escalation). This is a log, not hidden chain-of-thought.
 
-Two multi-step HR workflows are wired end-to-end:
+The People Desk buttons run two of these workflows (`remote-emp-1008` and `benefits-emp-1008`). The same questions are stable from `POST /demos/{id}` and from `POST /chat`. Other workflows are still available from the CLI:
 
 
 | Workflow                | Example                                                    | MCP tools                                                                                               |
 | ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Remote work eligibility | EMP-1008 lives in Tacoma (32 miles) and is still coded hub | `lookup_employee_profile`, `search_policy_documents`, `check_policy_compliance`                         |
+| Remote work eligibility | EMP-1008 lives in Tacoma (32 miles) and is still coded hub | `lookup_employee_profile`, `search_policy_documents`, `get_policy_section`, `check_policy_compliance`   |
+| Benefits election       | EMP-1008 is enrolled in HDHP with a 3% 401(k) deferral     | `search_policy_documents`, `get_policy_section`, `lookup_benefits_status`                               |
 | PTO request guidance    | EMP-1014 is not eligible to use PTO until 2026-10-08       | `lookup_employee_profile`, `check_pto_balance`, `get_policy_section`; submit is `create_mock_hr_ticket` |
 
 
-Also routed: benefits (`lookup_benefits_status`), expense compliance, onboarding (`get_policy_section`), and HR case triage (ticket + email are MOCK).
+Also routed: expense compliance, onboarding (`get_policy_section`), and HR case triage (ticket + email are MOCK).
 
 ```powershell
 # Default: spawn the MCP stdio server, then tools/list + tools/call. No API key.

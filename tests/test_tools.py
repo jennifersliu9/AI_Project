@@ -55,6 +55,9 @@ def test_get_policy_section_by_id():
     payload = get_policy_section("POL-PTO-001", section="Eligibility")
     assert payload["found"] is True
     assert payload["sections"]
+    assert "fallback" not in payload
+    assert {section["source_path"] for section in payload["sections"]} == {"corpus/01-paid-time-off.md"}
+    assert all("Eligibility" in section["section"] for section in payload["sections"])
 
 
 def test_check_policy_compliance_uses_rag_and_mock():
