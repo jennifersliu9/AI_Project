@@ -2,23 +2,27 @@
 
 Fictional Harborline Technologies policies plus HarborHub-style employee records, with a **seeded retrieval app** for employee questions about PTO, holidays, remote work, expenses, security, benefits, onboarding, equipment, leave, and conduct.
 
-- Policies: [`corpus/README.md`](corpus/README.md)
-- Structured records: [`data/README.md`](data/README.md)
-- Gold questions: [`eval/gold_questions.json`](eval/gold_questions.json)
-- Agent/Q&A gold tasks: [`eval/eval_tasks.json`](eval/eval_tasks.json)
-- Latest metrics: [`eval/REPORT.md`](eval/REPORT.md)
+- Policies: `[corpus/README.md](corpus/README.md)`
+- Structured records: `[data/README.md](data/README.md)`
+- Gold questions: `[eval/gold_questions.json](eval/gold_questions.json)`
+- Agent/Q&A gold tasks: `[eval/eval_tasks.json](eval/eval_tasks.json)`
+- Latest metrics: `[eval/REPORT.md](eval/REPORT.md)`
 
 Default answer mode is **retrieve-only**. It does not need an API key. Set `HARBORLINE_ANSWER_MODE=llm` and `OPENAI_API_KEY` only if you want a generated answer.
 
 ### FLAG — EXTERNAL vs what Cursor can do
 
-| Cursor / this repo can do | EXTERNAL (you must do outside this chat) |
-| --- | --- |
-| Write `harborline/tools.py`, `mcp_server.py`, `mcp_client.py`, `.cursor/mcp.json`, CLI, tests | **Enable MCP** in Cursor Settings and allow the `harborline` server |
-| Agent calls tools via MCP `tools/list` + `tools/call` (stdio or in-process FastMCP) | **Restart Cursor** after changing `mcp.json` so the stdio server is relaunched |
-| Retrieve-only answers, rewrite, rerank, guardrails, FAISS/TF-IDF (no API key) | Put **`OPENAI_API_KEY`** in a local `.env` if you want LLM synthesis (`HARBORLINE_ANSWER_MODE=llm`) |
-| Mock HR tickets / emails (never persist to disk) | A real HarborHub / HRIS write — **not implemented** and must stay mock |
-| Document architecture in [`docs/mcp.md`](docs/mcp.md) | Start Streamable HTTP yourself if you want that transport instead of stdio |
+
+| Cursor / this repo can do                                                                     | EXTERNAL (you must do outside this chat)                                                        |
+| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Write `harborline/tools.py`, `mcp_server.py`, `mcp_client.py`, `.cursor/mcp.json`, CLI, tests | **Enable MCP** in Cursor Settings and allow the `harborline` server                             |
+| Agent calls tools via MCP `tools/list` + `tools/call` (stdio or in-process FastMCP)           | **Restart Cursor** after changing `mcp.json` so the stdio server is relaunched                  |
+| Retrieve-only answers, rewrite, rerank, guardrails, FAISS/TF-IDF (no API key)                 | Put `OPENAI_API_KEY` in a local `.env` if you want LLM synthesis (`HARBORLINE_ANSWER_MODE=llm`) |
+| Mock HR tickets / emails (never persist to disk)                                              | A real HarborHub / HRIS write — **not implemented** and must stay mock                          |
+| Document architecture in `[docs/mcp.md](docs/mcp.md)`                                         | Start Streamable HTTP yourself if you want that transport instead of stdio                      |
+
+
+
 
 ## Prerequisites
 
@@ -27,7 +31,11 @@ Default answer mode is **retrieve-only**. It does not need an API key. Set `HARB
 - Optional: Docker, for the deployment path
 - Optional: an OpenAI-compatible API key, read from the environment (never committed)
 
+
+
 ## Setup
+
+
 
 ### Virtual environment (venv)
 
@@ -57,6 +65,8 @@ Dev extras (pytest):
 pip install -r requirements-dev.txt
 ```
 
+
+
 ### Conda
 
 ```powershell
@@ -65,30 +75,34 @@ conda activate harborline
 pip install -e .
 ```
 
+
+
 ### Secrets
 
-Copy the example file and edit the local copy. **Do not commit `.env`.**
+Copy the example file and edit the local copy. **Do not commit** `.env`**.**
 
 ```powershell
 copy .env.example .env
 ```
 
-| Variable | Required | Purpose |
-| --- | --- | --- |
-| `OPENAI_API_KEY` | Only for `HARBORLINE_ANSWER_MODE=llm` | Model provider key |
-| `OPENAI_MODEL` | No | Default `gpt-4o-mini` |
-| `OPENAI_BASE_URL` | No | Compatible gateway |
-| `HARBORLINE_SEED` | No | Default `42` for eval sampling and LLM seed |
-| `HARBORLINE_CHUNK_SIZE` | No | Deterministic window, default `900` |
-| `HARBORLINE_CHUNK_OVERLAP` | No | Deterministic overlap, default `120` |
-| `HARBORLINE_TOP_K` | No | Default `5` |
-| `HARBORLINE_ANSWER_MODE` | No | `retrieve` (default) or `llm` |
-| `HARBORLINE_REWRITE` | No | Query expansion, default `true` |
-| `HARBORLINE_RERANK` | No | Lexical + diverse-source rerank, default `true` |
-| `HARBORLINE_FETCH_K` | No | Candidate pool before rerank, default `20` |
-| `HARBORLINE_MIN_SCORE` | No | Guardrail floor, default `0.22` |
-| `HARBORLINE_RETRIEVE_BACKEND` | No | `faiss` (default) or `tfidf` |
-| `HARBORLINE_EMBEDDING_MODEL` | No | Local MiniLM, default `sentence-transformers/all-MiniLM-L6-v2` |
+
+| Variable                      | Required                              | Purpose                                                        |
+| ----------------------------- | ------------------------------------- | -------------------------------------------------------------- |
+| `OPENAI_API_KEY`              | Only for `HARBORLINE_ANSWER_MODE=llm` | Model provider key                                             |
+| `OPENAI_MODEL`                | No                                    | Default `gpt-4o-mini`                                          |
+| `OPENAI_BASE_URL`             | No                                    | Compatible gateway                                             |
+| `HARBORLINE_SEED`             | No                                    | Default `42` for eval sampling and LLM seed                    |
+| `HARBORLINE_CHUNK_SIZE`       | No                                    | Deterministic window, default `900`                            |
+| `HARBORLINE_CHUNK_OVERLAP`    | No                                    | Deterministic overlap, default `120`                           |
+| `HARBORLINE_TOP_K`            | No                                    | Default `5`                                                    |
+| `HARBORLINE_ANSWER_MODE`      | No                                    | `retrieve` (default) or `llm`                                  |
+| `HARBORLINE_REWRITE`          | No                                    | Query expansion, default `true`                                |
+| `HARBORLINE_RERANK`           | No                                    | Lexical + diverse-source rerank, default `true`                |
+| `HARBORLINE_FETCH_K`          | No                                    | Candidate pool before rerank, default `20`                     |
+| `HARBORLINE_MIN_SCORE`        | No                                    | Guardrail floor, default `0.22`                                |
+| `HARBORLINE_RETRIEVE_BACKEND` | No                                    | `faiss` (default) or `tfidf`                                   |
+| `HARBORLINE_EMBEDDING_MODEL`  | No                                    | Local MiniLM, default `sentence-transformers/all-MiniLM-L6-v2` |
+
 
 `.gitignore` excludes `.env`, `.venv/`, and `.cache/`.
 
@@ -107,12 +121,14 @@ python -m harborline.cli ingest
 
 What that does:
 
-| Step | What runs | Why |
-| --- | --- | --- |
-| Chunk | Heading-aware sections, then 900-character windows with 120-character overlap | Policy answers live under `##` headings; overlap keeps a split sentence in both chunks |
-| Embed | Local ONNX **all-MiniLM-L6-v2** via FastEmbed (free, CPU, no API key) | First run downloads the small model into the FastEmbed cache |
-| Store | Persistent **FAISS** index at `.cache/faiss` | Local vector store; cosine similarity (inner product on L2-normalized vectors) |
-| Metadata | `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, ids | Citations in `ask` / `--json` |
+
+| Step     | What runs                                                                     | Why                                                                                    |
+| -------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Chunk    | Heading-aware sections, then 900-character windows with 120-character overlap | Policy answers live under `##` headings; overlap keeps a split sentence in both chunks |
+| Embed    | Local ONNX **all-MiniLM-L6-v2** via FastEmbed (free, CPU, no API key)         | First run downloads the small model into the FastEmbed cache                           |
+| Store    | Persistent **FAISS** index at `.cache/faiss`                                  | Local vector store; cosine similarity (inner product on L2-normalized vectors)         |
+| Metadata | `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, ids    | Citations in `ask` / `--json`                                                          |
+
 
 You should see counts by format (`md`, `html`, `pdf`, `txt`, `json`) and the FAISS path.
 
@@ -161,7 +177,7 @@ Run ingest first, then:
 uvicorn harborline.api:app --reload --port 8000
 ```
 
-Open **http://127.0.0.1:8000** for the People Desk chat UI. Use the two grader demo buttons, or POST `/chat`.
+Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** for the People Desk chat UI. Use the two grader demo buttons, or POST `/chat`.
 
 ```powershell
 curl http://127.0.0.1:8000/health
@@ -215,29 +231,33 @@ For a hosted deploy (Cloud Run, App Service, Fly.io, Render), set the same env v
 
 ## CI / CD
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every **push** and **pull request**.
+`[.github/workflows/ci.yml](.github/workflows/ci.yml)` runs on every **push** and **pull request**.
 
 1. Install `requirements.txt` + `requirements-dev.txt` and `pip install -e .`.
 2. Import/start check: load `harborline.api:app` and the MCP server factory.
 3. `pytest` including:
-   - **App start:** `GET /` and `GET /health` (`tests/test_api.py`)
-   - **MCP discovery + call:** `mcp.discovered_tools` on `/health`, plus `tests/test_mcp.py` (`tools/list` and `lookup_employee_profile`)
+  - **App start:** `GET /` and `GET /health` (`tests/test_api.py`)
+  - **MCP discovery + call:** `mcp.discovered_tools` on `/health`, plus `tests/test_mcp.py` (`tools/list` and `lookup_employee_profile`)
 4. **Deploy runs only if that test job succeeds** (`needs: test`). Pull requests never deploy. On push, CI calls a Render deploy hook **only** if you add a GitHub Actions secret named `RENDER_DEPLOY_HOOK`. Until that secret exists, the deploy job is a successful no-op (no live URL yet).
 
 CI uses `HARBORLINE_RETRIEVE_BACKEND=tfidf` so it stays offline and does not download MiniLM.
 
 ## Reproducibility
 
-| Knob | Default | Effect |
-| --- | --- | --- |
-| `HARBORLINE_SEED` | 42 | `random`, NumPy, eval sampling, LLM `seed` |
-| `HARBORLINE_CHUNK_SIZE` / `OVERLAP` | 900 / 120 | Same text always yields the same chunks |
-| FAISS + MiniLM | local ONNX FastEmbed | Persistent vectors in `.cache/faiss` |
-| TF-IDF retrieve | optional | Stable sort: score desc, `chunk_id` asc |
+
+| Knob                                | Default              | Effect                                     |
+| ----------------------------------- | -------------------- | ------------------------------------------ |
+| `HARBORLINE_SEED`                   | 42                   | `random`, NumPy, eval sampling, LLM `seed` |
+| `HARBORLINE_CHUNK_SIZE` / `OVERLAP` | 900 / 120            | Same text always yields the same chunks    |
+| FAISS + MiniLM                      | local ONNX FastEmbed | Persistent vectors in `.cache/faiss`       |
+| TF-IDF retrieve                     | optional             | Stable sort: score desc, `chunk_id` asc    |
+
+
+
 
 ## Tools and MCP
 
-Full write-up: [`docs/mcp.md`](docs/mcp.md).
+Full write-up: `[docs/mcp.md](docs/mcp.md)`.
 
 The MCP server is `python -m harborline.mcp_server` (FastMCP, **stdio** by default). `.cursor/mcp.json` points Cursor at this repo's venv Python. The agent client (`harborline.mcp_client`) **discovers** tools with `tools/list` and **calls** them with `tools/call`. Hard-coded `harborline.tools` imports are not used during agent execution.
 
@@ -261,6 +281,8 @@ Optional localhost MCP (EXTERNAL: you start this process):
 python -m harborline.mcp_server --transport streamable-http --port 8765
 ```
 
+
+
 ### EXTERNAL — enable MCP in Cursor (this chat cannot do this)
 
 1. Install deps so the `mcp` package is present (`pip install -r requirements.txt` and `pip install -e .`).
@@ -279,10 +301,12 @@ The CLI agent does **not** need Cursor Settings. Default transport is stdio (`py
 
 Two multi-step HR workflows are wired end-to-end:
 
-| Workflow | Example | MCP tools |
-| --- | --- | --- |
-| Remote work eligibility | EMP-1008 lives in Tacoma (32 miles) and is still coded hub | `lookup_employee_profile`, `search_policy_documents`, `check_policy_compliance` |
-| PTO request guidance | EMP-1014 is not eligible to use PTO until 2026-10-08 | `lookup_employee_profile`, `check_pto_balance`, `get_policy_section`; submit is `create_mock_hr_ticket` |
+
+| Workflow                | Example                                                    | MCP tools                                                                                               |
+| ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| Remote work eligibility | EMP-1008 lives in Tacoma (32 miles) and is still coded hub | `lookup_employee_profile`, `search_policy_documents`, `check_policy_compliance`                         |
+| PTO request guidance    | EMP-1014 is not eligible to use PTO until 2026-10-08       | `lookup_employee_profile`, `check_pto_balance`, `get_policy_section`; submit is `create_mock_hr_ticket` |
+
 
 Also routed: benefits (`lookup_benefits_status`), expense compliance, onboarding (`get_policy_section`), and HR case triage (ticket + email are MOCK).
 
@@ -313,3 +337,6 @@ pyproject.toml      Package metadata
 .env.example        Secret names only
 Dockerfile
 ```
+
+
+
