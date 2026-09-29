@@ -8,7 +8,12 @@ Fictional Harborline Technologies policies plus HarborHub-style employee records
 - Agent/Q&A gold tasks: `[eval/eval_tasks.json](eval/eval_tasks.json)`
 - Latest metrics: `[eval/REPORT.md](eval/REPORT.md)`
 
-Default answer mode is **retrieve-only**. It does not need an API key. Set `HARBORLINE_ANSWER_MODE=llm` and `OPENAI_API_KEY` only if you want a generated answer.
+Answer mode follows the key **this process** can see:
+
+- **`OPENAI_API_KEY` set** in `.env` or the environment, and `HARBORLINE_ANSWER_MODE` left unset: mode is **llm**. `ask`, People Desk, and `python -m harborline.cli agent` ask the model to write a cited answer from MCP evidence.
+- **No key**: mode is **retrieve**. Answers are extractive templates. No model call.
+
+Enabling MCP in Cursor Settings and saving a key under **Cursor Settings → Models** does not switch this app. That key is for Cursor's own chat. Harborline reads `OPENAI_API_KEY` from `.env` (`.cursor/mcp.json` loads that file) or the process environment. The MCP config does **not** pin `HARBORLINE_ANSWER_MODE=retrieve`, so a key in `.env` is enough. Set `HARBORLINE_ANSWER_MODE=retrieve` only when you want templates even though a key is present. `GET /health` shows `answer_mode_detail` so you can see which case is active.
 
 ### FLAG — EXTERNAL vs what Cursor can do
 
@@ -17,7 +22,7 @@ Default answer mode is **retrieve-only**. It does not need an API key. Set `HARB
 | --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
 | Write `harborline/tools.py`, `mcp_server.py`, `mcp_client.py`, `.cursor/mcp.json`, CLI, tests | **Enable MCP** in Cursor Settings and allow the `harborline` server                             |
 | Agent calls tools via MCP `tools/list` + `tools/call` (stdio or in-process FastMCP)           | **Restart Cursor** after changing `mcp.json` so the stdio server is relaunched                  |
-| Retrieve-only answers, rewrite, rerank, guardrails, FAISS/TF-IDF (no API key)                 | Put `OPENAI_API_KEY` in a local `.env` if you want LLM synthesis (`HARBORLINE_ANSWER_MODE=llm`) |
+| Retrieve answers when no key is set; llm answers when `OPENAI_API_KEY` is in `.env`           | Put `OPENAI_API_KEY` in a local `.env` (Cursor Settings → Models is a different key store)     |
 | Mock HR tickets / emails (never persist to disk)                                              | A real HarborHub / HRIS write — **not implemented** and must stay mock                          |
 | Document architecture in `[docs/mcp.md](docs/mcp.md)`                                         | Start Streamable HTTP yourself if you want that transport instead of stdio                      |
 
@@ -88,14 +93,14 @@ copy .env.example .env
 
 | Variable                      | Required                              | Purpose                                                        |
 | ----------------------------- | ------------------------------------- | -------------------------------------------------------------- |
-| `OPENAI_API_KEY`              | Only for `HARBORLINE_ANSWER_MODE=llm` | Model provider key                                             |
+| `OPENAI_API_KEY`              | For llm answers                           | Model key. If set and answer mode is unset, mode becomes `llm` |
 | `OPENAI_MODEL`                | No                                    | Default `gpt-4o-mini`                                          |
 | `OPENAI_BASE_URL`             | No                                    | Compatible gateway                                             |
 | `HARBORLINE_SEED`             | No                                    | Default `42` for eval sampling and LLM seed                    |
 | `HARBORLINE_CHUNK_SIZE`       | No                                    | Deterministic window, default `900`                            |
 | `HARBORLINE_CHUNK_OVERLAP`    | No                                    | Deterministic overlap, default `120`                           |
 | `HARBORLINE_TOP_K`            | No                                    | Default `5`                                                    |
-| `HARBORLINE_ANSWER_MODE`      | No                                    | `retrieve` (default) or `llm`                                  |
+| `HARBORLINE_ANSWER_MODE`      | No                                    | Unset: `llm` if a key is set, otherwise `retrieve`. Or set `retrieve` / `llm` |
 | `HARBORLINE_REWRITE`          | No                                    | Query expansion, default `true`                                |
 | `HARBORLINE_RERANK`           | No                                    | Lexical + diverse-source rerank, default `true`                |
 | `HARBORLINE_FETCH_K`          | No                                    | Candidate pool before rerank, default `20`                     |
@@ -159,9 +164,9 @@ To have the model write a **Policy fact / Citations / Not a recommendation** ans
 
 1. Create an OpenAI account (or any OpenAI-compatible endpoint).
 2. Copy `.env.example` to `.env` locally.
-3. Set `OPENAI_API_KEY` in `.env` (never commit `.env`, never paste the key into chat).
-4. Set `HARBORLINE_ANSWER_MODE=llm`.
-5. Run the same `ask` commands. Temperature is `0` and `seed` is `42`.
+3. Set `OPENAI_API_KEY` in `.env` (never commit `.env`, never paste the key into chat). Leave `HARBORLINE_ANSWER_MODE` unset. A key only in Cursor Settings → Models is not read.
+4. Restart the app (and Cursor, if it launched the MCP server) so the process reloads `.env`.
+5. Run the same `ask` commands, or use People Desk. Temperature is `0` and `seed` is `42`. `GET /health` should report `answer_mode` `llm`.
 
 Azure or a gateway: also set `OPENAI_BASE_URL`.
 
@@ -189,7 +194,7 @@ curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "
 curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" -d "{\"query\":\"When does the 401k match vest?\"}"
 ```
 
-`GET /health` reports `app` plus `mcp.available` and discovered tool names. `POST /demos/{id}` and `POST /chat` run the MCP orchestrator and return `answer`, `citations`, `snippets`, and `trace`. Repeating a demo returns the same answer and the same policy file in every citation. `POST /ask` is retrieve-only (no agent).
+`GET /health` reports `app`, `answer_mode`, `answer_mode_detail`, plus `mcp.available` and discovered tool names. `POST /demos/{id}` and `POST /chat` run the MCP orchestrator and return `answer`, `citations`, `snippets`, and `trace`. With no API key those answers stay extractive. With `OPENAI_API_KEY` set and answer mode left unset, the same MCP evidence is worded by the model. Repeating a demo returns the same answer and the same policy file in every citation while mode stays retrieve. `POST /ask` skips the agent and answers from retrieval (llm wording when that mode is active).
 
 | Demo | What it does | Tools |
 | --- | --- | --- |
@@ -297,7 +302,7 @@ python -m harborline.mcp_server --transport streamable-http --port 8765
 3. **You** enable MCP in **Cursor Settings** and allow the `harborline` server.
 4. **You** restart Cursor after editing `mcp.json`.
 5. For FAISS inside the Cursor-hosted server, **you** run ingest once (or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`).
-6. Optional LLM synthesis: **you** put `OPENAI_API_KEY` in a local `.env` (never commit it) and set `HARBORLINE_ANSWER_MODE=llm`.
+6. LLM wording: **you** put `OPENAI_API_KEY` in a local `.env` (never commit it). Do not also set `HARBORLINE_ANSWER_MODE=retrieve`. A key saved only in Cursor Settings → Models does not reach this server. Restart Cursor after editing `.env`.
 7. Streamable HTTP is not started by Cursor unless **you** launch it and add the URL.
 
 The CLI agent does **not** need Cursor Settings. Default transport is stdio (`python -m harborline.cli agent`). Use `--transport mcp-inproc` to stay in one process.

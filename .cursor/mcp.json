@@ -7,7 +7,6 @@
       "cwd": "${workspaceFolder}",
       "envFile": "${workspaceFolder}/.env",
       "env": {
-        "HARBORLINE_ANSWER_MODE": "retrieve",
         "HARBORLINE_RETRIEVE_BACKEND": "faiss",
         "PYTHONUNBUFFERED": "1"
       }

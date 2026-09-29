@@ -169,10 +169,12 @@
         const data = await res.json();
         const mcp = data.mcp || {};
         const ok = data.app === "ok" && mcp.available;
+        const mode = data.answer_mode_detail || data.answer_mode || "retrieve";
         $("health").innerHTML =
           `<span class="dot ${ok ? "ok" : "bad"}"></span>` +
           `app=${data.app || data.status} · mcp=${mcp.available ? "connected" : "unavailable"}` +
-          (mcp.tool_count != null ? ` · ${mcp.tool_count} tools` : "");
+          (mcp.tool_count != null ? ` · ${mcp.tool_count} tools` : "") +
+          ` · answers=${escapeHtml(mode)}`;
       } catch (err) {
         $("health").innerHTML = `<span class="dot bad"></span>health check failed`;
       }
@@ -190,7 +192,7 @@
       ).join("");
       const demoMeta = data.demo_id ? ` · demo=${escapeHtml(data.demo_id)}` : "";
       $("out").innerHTML = `
-        <p class="meta">intent=${escapeHtml(data.intent || "")} · workflow=${escapeHtml(data.workflow || "")} · transport=${escapeHtml(data.tool_transport || "")}${demoMeta}</p>
+        <p class="meta">intent=${escapeHtml(data.intent || "")} · workflow=${escapeHtml(data.workflow || "")} · transport=${escapeHtml(data.tool_transport || "")} · answers=${escapeHtml(data.answer_mode || "")}${demoMeta}</p>
         <h2>Answer</h2>
         <div class="answer">${escapeHtml(data.answer || "")}</div>
         <h2>Citations</h2>
