@@ -129,7 +129,7 @@ cp .env.example .env
 
 Activate the virtualenv and run commands from the repo root. The default `pinecone` backend needs `OPENAI_API_KEY` plus `PINECONE_API_KEY` and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). `HARBORLINE_RETRIEVE_BACKEND=tfidf` needs no keys.
 
-**Ingest** parses `corpus/` (Markdown and HTML by heading, PDF by page, TXT by window) and `data/*.json` as structured records. Sections longer than the window are split into 900-character chunks with 120-character overlap. Embeddings are OpenAI **text-embedding-3-small**. Vectors are upserted to a Pinecone namespace (cosine, dimension 1536) and are not loaded into this process. Each chunk keeps `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, and ids so `ask` can cite them. Create the index once in Pinecone before the first ingest.
+**Ingest** parses `corpus/` (Markdown and HTML by heading, PDF by page, TXT by window) and `data/*.json` as structured records. Sections longer than the window are split into 900-character chunks with 120-character overlap. Embeddings are OpenAI **text-embedding-3-small**. Vectors are upserted to a Pinecone namespace (cosine, dimension 1536) and are not loaded into this process. Those cosine scores often sit higher than the old local MiniLM scores. The guardrail floor stays `0.22`; raise `HARBORLINE_MIN_SCORE` if unrelated questions start passing it. Each chunk keeps `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, and ids so `ask` can cite them. Create the index once in Pinecone before the first ingest.
 
 ```bash
 python -m harborline.cli ingest

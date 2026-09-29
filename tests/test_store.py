@@ -276,6 +276,23 @@ def test_search_reads_matches_and_does_not_retain_vectors(monkeypatch):
     assert set(vars(retriever)) == {"settings"}
 
 
+def test_stdio_env_forwards_hosted_index(monkeypatch):
+    monkeypatch.delenv("HARBORLINE_RETRIEVE_BACKEND", raising=False)
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    monkeypatch.setenv("PINECONE_API_KEY", "pc-test")
+    monkeypatch.setenv("PINECONE_INDEX_HOST", "harborline.svc.pinecone.io")
+    monkeypatch.setenv("HARBORLINE_EMBEDDING_MODEL", "text-embedding-3-small")
+    from harborline.mcp_client import stdio_server_env
+
+    env = stdio_server_env()
+    assert env["HARBORLINE_RETRIEVE_BACKEND"] == "pinecone"
+    assert env["OPENAI_API_KEY"] == "sk-test"
+    assert env["PINECONE_API_KEY"] == "pc-test"
+    assert env["PINECONE_INDEX_HOST"] == "harborline.svc.pinecone.io"
+    assert env["HARBORLINE_EMBEDDING_MODEL"] == "text-embedding-3-small"
+    assert "FASTEMBED_CACHE_PATH" not in env
+
+
 def test_faiss_backend_is_rejected():
     settings = _settings(retrieve_backend="faiss")
     with pytest.raises(ValueError, match="faiss"):
