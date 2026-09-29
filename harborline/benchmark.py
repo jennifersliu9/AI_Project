@@ -287,6 +287,21 @@ def run_report(
     }
 
 
+def _report_mode_line() -> str:
+    mode = get_settings().answer_mode
+    if mode == "llm":
+        return (
+            "Answer mode is llm: MCP tools gather evidence, then the model writes the cited answer. "
+            "Groundedness counts a task as grounded if it cites a gold source, matches a gold phrase, "
+            "or correctly refuses/clarifies."
+        )
+    return (
+        "Answer mode is retrieve: rule-based agent wording, no LLM synthesis. "
+        "Groundedness counts a task as grounded if it cites a gold source, matches a gold phrase, "
+        "or correctly refuses/clarifies."
+    )
+
+
 def format_report(report: dict) -> str:
     q = report["answer_quality"]
     a = report["agent_behavior"]
@@ -299,7 +314,7 @@ def format_report(report: dict) -> str:
         f"families={report['families']}",
         "",
         "Gold tasks: `eval/eval_tasks.json` (26 items). Runner: `python -m harborline.cli report --backend tfidf --write`.",
-        "Answer mode is retrieve + rule-based agent (no LLM synthesis). Groundedness counts a task as grounded if it cites a gold source, matches a gold phrase, or correctly refuses/clarifies.",
+        _report_mode_line(),
         "Partial match is the stricter check against `expected_contains`. Citation accuracy is recall of gold source filenames among returned citations.",
         "",
         "## Answer quality",

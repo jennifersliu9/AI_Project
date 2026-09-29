@@ -40,6 +40,25 @@ def _bool(name: str, default: bool) -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def resolve_answer_mode(explicit: str | None = None, api_key: str | None = None) -> str:
+    """Pick retrieve vs llm.
+
+    An explicit HARBORLINE_ANSWER_MODE wins. When it is unset, a non-empty
+    OPENAI_API_KEY selects llm; otherwise the offline retrieve path is used.
+    Cursor Settings → Models does not set this variable.
+    """
+    if explicit is None:
+        explicit = os.getenv("HARBORLINE_ANSWER_MODE")
+    if api_key is None:
+        api_key = os.getenv("OPENAI_API_KEY")
+    mode = (explicit or "").strip().lower()
+    if mode:
+        return mode
+    if (api_key or "").strip():
+        return "llm"
+    return "retrieve"
+
+
 @dataclass(frozen=True)
 class Settings:
     seed: int
@@ -78,15 +97,27 @@ class Settings:
         return self.openai_api_key
 
 
+def describe_answer_mode(settings: Settings) -> str:
+    """Short status for /health. Names why the process is not using the model."""
+    explicit = (os.getenv("HARBORLINE_ANSWER_MODE") or "").strip().lower()
+    if settings.answer_mode == "llm" and settings.openai_api_key:
+        return "llm"
+    if settings.answer_mode == "llm":
+        return "llm (OPENAI_API_KEY is not set in this process)"
+    if explicit == "retrieve":
+        return "retrieve (HARBORLINE_ANSWER_MODE=retrieve)"
+    return "retrieve (no OPENAI_API_KEY in this process)"
+
+
 @lru_cache(maxsize=1)
 def get_settings() -> Settings:
-    key = os.getenv("OPENAI_API_KEY") or None
+    key = (os.getenv("OPENAI_API_KEY") or "").strip() or None
     return Settings(
         seed=_int("HARBORLINE_SEED", 42),
         chunk_size=_int("HARBORLINE_CHUNK_SIZE", 900),
         chunk_overlap=_int("HARBORLINE_CHUNK_OVERLAP", 120),
         top_k=_int("HARBORLINE_TOP_K", 5),
-        answer_mode=_str("HARBORLINE_ANSWER_MODE", "retrieve").lower(),
+        answer_mode=resolve_answer_mode(),
         retrieve_backend=_str("HARBORLINE_RETRIEVE_BACKEND", "faiss").lower(),
         embedding_model=_str(
             "HARBORLINE_EMBEDDING_MODEL",

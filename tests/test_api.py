@@ -19,6 +19,8 @@ def test_health_includes_mcp():
     assert res.status_code == 200
     body = res.json()
     assert body["app"] == "ok"
+    assert body["answer_mode"] == "retrieve"
+    assert "retrieve" in body["answer_mode_detail"]
     assert "mcp" in body
     assert body["mcp"]["available"] is True
     assert "search_policy_documents" in body["mcp"]["discovered_tools"]

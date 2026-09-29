@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from harborline.agent import run_agent
 from harborline.answer import ask
-from harborline.config import get_settings
+from harborline.config import describe_answer_mode, get_settings
 from harborline.demos import DEMOS, get_demo
 from harborline.evaluate import run_eval
 from harborline.retrieve import build_retriever
@@ -101,6 +101,7 @@ def health() -> dict:
         "app": "ok",
         "seed": settings.seed,
         "answer_mode": settings.answer_mode,
+        "answer_mode_detail": describe_answer_mode(settings),
         "retrieve_backend": settings.retrieve_backend,
         "embedding_model": settings.embedding_model,
         "has_openai_key": bool(settings.openai_api_key),
