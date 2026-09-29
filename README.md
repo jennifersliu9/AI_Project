@@ -123,7 +123,7 @@ cp .env.example .env
 | `HARBORLINE_RERANK` | No | `true` | Lexical overlap plus diverse sources |
 | `HARBORLINE_MIN_SCORE` | No | `0.22` | Guardrail floor |
 | `HARBORLINE_RETRIEVE_BACKEND` | No | `pinecone` | `pinecone` or `tfidf` |
-| `HARBORLINE_EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model |
+| `HARBORLINE_EMBEDDING_MODEL` | No | `text-embedding-3-small` | Passed to `OpenAIEmbeddings` (cloud API). Local HuggingFace ids are rejected |
 
 ## RAG pipeline
 
