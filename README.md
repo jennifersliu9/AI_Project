@@ -1,58 +1,73 @@
-# Harborline AI Engineering Project
+# Harborline
 
-Fictional Harborline Technologies policies plus HarborHub-style employee records, with a **seeded retrieval app** for employee questions about PTO, holidays, remote work, expenses, security, benefits, onboarding, equipment, leave, and conduct.
+Employee Q&A for fictional **Harborline Technologies**. The repo holds a 2026 policy corpus, HarborHub-style employee records, and a seeded retrieval app that answers questions about PTO, holidays, remote work, expenses, security, benefits, onboarding, equipment, leave, and conduct.
 
-- Policies: `[corpus/README.md](corpus/README.md)`
-- Structured records: `[data/README.md](data/README.md)`
-- Gold questions: `[eval/gold_questions.json](eval/gold_questions.json)`
-- Agent/Q&A gold tasks: `[eval/eval_tasks.json](eval/eval_tasks.json)`
-- Latest metrics: `[eval/REPORT.md](eval/REPORT.md)`
+Default answer mode is **retrieve-only**. It needs no API key. Set `HARBORLINE_ANSWER_MODE=llm` and `OPENAI_API_KEY` in a local `.env` when you want a model to write the answer. Tickets and emails are session-only mocks; nothing is written to HarborHub or to `data/tickets.json`.
 
-Answer mode follows the key **this process** can see:
+Deeper references:
 
-- **`OPENAI_API_KEY` set** in `.env` or the environment, and `HARBORLINE_ANSWER_MODE` left unset: mode is **llm**. `ask`, People Desk, and `python -m harborline.cli agent` ask the model to write a cited answer from MCP evidence.
-- **No key**: mode is **retrieve**. Answers are extractive templates. No model call.
+| Topic | Where |
+| --- | --- |
+| Policy set | [corpus/README.md](corpus/README.md) |
+| Mock HarborHub rows | [data/README.md](data/README.md) |
+| MCP transports, schemas, Cursor config | [docs/mcp.md](docs/mcp.md) |
+| Retrieval gold set (15 questions) | [eval/gold_questions.json](eval/gold_questions.json) |
+| Agent gold set (26 tasks) | [eval/eval_tasks.json](eval/eval_tasks.json) |
+| Latest scored report | [eval/REPORT.md](eval/REPORT.md) |
 
-Enabling MCP in Cursor Settings and saving a key under **Cursor Settings → Models** does not switch this app. That key is for Cursor's own chat. Harborline reads `OPENAI_API_KEY` from `.env` (`.cursor/mcp.json` loads that file) or the process environment. The MCP config does **not** pin `HARBORLINE_ANSWER_MODE=retrieve`, so a key in `.env` is enough. Set `HARBORLINE_ANSWER_MODE=retrieve` only when you want templates even though a key is present. `GET /health` shows `answer_mode_detail` so you can see which case is active.
+## What is in the repo
 
-### FLAG — EXTERNAL vs what Cursor can do
+**Policies.** Twelve handbook documents (`POL-HB-000` through `POL-FAM-011`) plus HTML, TXT, and PDF companions. Shared facts are repeated on purpose: 15/20/25 PTO days by tenure, a 40-hour carryover cap, 11 holidays plus 2 floating days, a 50-mile hub rule, $225 US hotel / $75 meal caps, receipts at $25, immediate 401(k) vesting, and 16/8 weeks of parental leave. Corpus revision date is 1 September 2026. Rebuild the two PDFs with `python scripts/build_pdfs.py`.
 
+**HarborHub records (as of 21 September 2026).** Three offices, 16 employees (`EMP-1001`–`EMP-1016`), matching PTO banks and benefits elections, and 14 existing tickets. Join on `employee_id`. Two rows the agent demos use:
 
-| Cursor / this repo can do                                                                     | EXTERNAL (you must do outside this chat)                                                        |
-| --------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------- |
-| Write `harborline/tools.py`, `mcp_server.py`, `mcp_client.py`, `.cursor/mcp.json`, CLI, tests | **Enable MCP** in Cursor Settings and allow the `harborline` server                             |
-| Agent calls tools via MCP `tools/list` + `tools/call` (stdio or in-process FastMCP)           | **Restart Cursor** after changing `mcp.json` so the stdio server is relaunched                  |
-| Retrieve answers when no key is set; llm answers when `OPENAI_API_KEY` is in `.env`           | Put `OPENAI_API_KEY` in a local `.env` (Cursor Settings → Models is a different key store)     |
-| Mock HR tickets / emails (never persist to disk)                                              | A real HarborHub / HRIS write — **not implemented** and must stay mock                          |
-| Document architecture in `[docs/mcp.md](docs/mcp.md)`                                         | Start Streamable HTTP yourself if you want that transport instead of stdio                      |
+| ID | Who | What the row is for |
+| --- | --- | --- |
+| EMP-1008 | Alex Kim, software engineer, Tacoma | Hub Seattle at 32 miles; fully remote needs a People Ops reclass |
+| EMP-1014 | Devon Walsh, account executive, started 8 Sep 2026 | PTO not usable until 8 Oct 2026; benefits election still open |
 
+**App.** Heading-aware chunking, local MiniLM embeddings, a FAISS index, query rewrite, lexical rerank, citations, and corpus guardrails. A rule-based HR agent calls eight tools through MCP. FastAPI serves a People Desk chat page plus `/chat`, `/ask`, `/health`, `/demos`, and `/eval`. GitHub Actions installs, starts the app, runs pytest, and deploys only after tests pass.
 
+## Architecture
 
+```
+People Desk UI  /  CLI ask  /  CLI agent  /  POST /chat
+        │
+        ├─ ask  → rewrite → retrieve (FAISS or TF-IDF) → rerank → guardrails → cited answer
+        │
+        └─ agent → intent → MCP tools/list + tools/call
+                    │
+                    ├─ search_policy_documents, get_policy_section, check_policy_compliance
+                    │     RAG index (corpus/ + data/*.json)
+                    ├─ lookup_employee_profile, check_pto_balance, lookup_benefits_status
+                    │     mock HarborHub JSON
+                    └─ create_mock_hr_ticket, draft_hr_email
+                          session-only MOCK (never tickets.json)
+```
+
+The agent classifies intent locally, then calls only tools the MCP server listed. Hard-coded `harborline.tools` imports are the server implementation and the `cli tool` debugger. They are not the agent path.
+
+| Intent | Needs an employee id | Tools |
+| --- | --- | --- |
+| Remote work eligibility | yes | `lookup_employee_profile`, `search_policy_documents`, `check_policy_compliance` |
+| PTO guidance (submit stays mock) | yes | `lookup_employee_profile`, `check_pto_balance`, `get_policy_section`, optional `create_mock_hr_ticket` |
+| Benefits | when the question is personal | `search_policy_documents`, `lookup_benefits_status` |
+| Expense compliance | no | `check_policy_compliance` |
+| Onboarding | no | `get_policy_section` |
+| HR case triage | no | `search_policy_documents`, `create_mock_hr_ticket`, `draft_hr_email` |
+| Single-policy Q&A | no | `search_policy_documents` |
+| Ambiguous, out of corpus, or unknown employee | — | clarify, refuse, or escalate; no invented facts |
 
 ## Prerequisites
 
-- Python 3.11+ (3.12 recommended)
-- Optional: Conda, if you prefer `environment.yml`
-- Optional: Docker, for the deployment path
-- Optional: an OpenAI-compatible API key, read from the environment (never committed)
-
-
+- Python 3.11+ (3.12 is what CI uses)
+- Optional: Conda (`environment.yml`)
+- Optional: Docker
+- Optional: an OpenAI-compatible API key, read from the environment and never committed
 
 ## Setup
 
-
-
-### Virtual environment (venv)
-
-From the repository root on Windows PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install --upgrade pip
-pip install -r requirements.txt
-pip install -e .
-```
+From the repository root.
 
 macOS / Linux:
 
@@ -62,129 +77,110 @@ source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 pip install -e .
+pip install -r requirements-dev.txt   # pytest, httpx
 ```
 
-Dev extras (pytest):
+Windows PowerShell:
 
 ```powershell
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+pip install -e .
 pip install -r requirements-dev.txt
 ```
 
+Conda:
 
-
-### Conda
-
-```powershell
+```bash
 conda env create -f environment.yml
 conda activate harborline
 pip install -e .
 ```
 
+Secrets stay in a local `.env`. Copy the example and edit it. `.gitignore` already excludes `.env`, `.venv/`, and `.cache/`.
 
-
-### Secrets
-
-Copy the example file and edit the local copy. **Do not commit** `.env`**.**
-
-```powershell
-copy .env.example .env
+```bash
+cp .env.example .env
 ```
 
+| Variable | Required | Default | Purpose |
+| --- | --- | --- | --- |
+| `OPENAI_API_KEY` | Only for LLM answers | empty | Provider key |
+| `OPENAI_MODEL` | No | `gpt-4o-mini` | Chat model |
+| `OPENAI_BASE_URL` | No | OpenAI | Azure or another compatible gateway |
+| `HARBORLINE_ANSWER_MODE` | No | `retrieve` | `retrieve` or `llm` |
+| `HARBORLINE_SEED` | No | `42` | Eval sampling and LLM seed |
+| `HARBORLINE_CHUNK_SIZE` | No | `900` | Deterministic window |
+| `HARBORLINE_CHUNK_OVERLAP` | No | `120` | Overlap between windows |
+| `HARBORLINE_TOP_K` | No | `5` | Hits returned after rerank |
+| `HARBORLINE_FETCH_K` | No | `20` | Candidate pool before rerank |
+| `HARBORLINE_REWRITE` | No | `true` | Query expansion |
+| `HARBORLINE_RERANK` | No | `true` | Lexical overlap plus diverse sources |
+| `HARBORLINE_MIN_SCORE` | No | `0.22` | Guardrail floor |
+| `HARBORLINE_RETRIEVE_BACKEND` | No | `faiss` | `faiss` or `tfidf` |
+| `HARBORLINE_EMBEDDING_MODEL` | No | `sentence-transformers/all-MiniLM-L6-v2` | Local FastEmbed ONNX model |
 
-| Variable                      | Required                              | Purpose                                                        |
-| ----------------------------- | ------------------------------------- | -------------------------------------------------------------- |
-| `OPENAI_API_KEY`              | For llm answers                           | Model key. If set and answer mode is unset, mode becomes `llm` |
-| `OPENAI_MODEL`                | No                                    | Default `gpt-4o-mini`                                          |
-| `OPENAI_BASE_URL`             | No                                    | Compatible gateway                                             |
-| `HARBORLINE_SEED`             | No                                    | Default `42` for eval sampling and LLM seed                    |
-| `HARBORLINE_CHUNK_SIZE`       | No                                    | Deterministic window, default `900`                            |
-| `HARBORLINE_CHUNK_OVERLAP`    | No                                    | Deterministic overlap, default `120`                           |
-| `HARBORLINE_TOP_K`            | No                                    | Default `5`                                                    |
-| `HARBORLINE_ANSWER_MODE`      | No                                    | Unset: `llm` if a key is set, otherwise `retrieve`. Or set `retrieve` / `llm` |
-| `HARBORLINE_REWRITE`          | No                                    | Query expansion, default `true`                                |
-| `HARBORLINE_RERANK`           | No                                    | Lexical + diverse-source rerank, default `true`                |
-| `HARBORLINE_FETCH_K`          | No                                    | Candidate pool before rerank, default `20`                     |
-| `HARBORLINE_MIN_SCORE`        | No                                    | Guardrail floor, default `0.22`                                |
-| `HARBORLINE_RETRIEVE_BACKEND` | No                                    | `faiss` (default) or `tfidf`                                   |
-| `HARBORLINE_EMBEDDING_MODEL`  | No                                    | Local MiniLM, default `sentence-transformers/all-MiniLM-L6-v2` |
+## RAG pipeline
 
+Activate the virtualenv and run commands from the repo root. No API key is required.
 
-`.gitignore` excludes `.env`, `.venv/`, and `.cache/`.
+**Ingest** parses `corpus/` (Markdown and HTML by heading, PDF by page, TXT by window) and `data/*.json` as structured records. Sections longer than the window are split into 900-character chunks with 120-character overlap. Embeddings are local ONNX **all-MiniLM-L6-v2** (first run downloads into the FastEmbed cache). The index is written to `.cache/faiss` with cosine similarity. Each chunk keeps `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, and ids so `ask` can cite them.
 
-## How to execute the RAG pipeline
-
-Do this from the repo root with `.venv` activated. No API key is required.
-
-**1. Parse and clean (markdown, HTML, PDF, TXT)**  
-The ingest command reads `corpus/` (and `data/*.json` as structured records). Markdown and HTML are split on headings. PDFs are split by page, then by the same window if a page is long. TXT uses a body window with overlap.
-
-**2–5. Chunk, embed, store, keep citation metadata** — one command:
-
-```powershell
+```bash
 python -m harborline.cli ingest
 ```
 
-What that does:
+**Ask** retrieves, prints citations, and refuses questions outside the corpus.
 
-
-| Step     | What runs                                                                     | Why                                                                                    |
-| -------- | ----------------------------------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Chunk    | Heading-aware sections, then 900-character windows with 120-character overlap | Policy answers live under `##` headings; overlap keeps a split sentence in both chunks |
-| Embed    | Local ONNX **all-MiniLM-L6-v2** via FastEmbed (free, CPU, no API key)         | First run downloads the small model into the FastEmbed cache                           |
-| Store    | Persistent **FAISS** index at `.cache/faiss`                                  | Local vector store; cosine similarity (inner product on L2-normalized vectors)         |
-| Metadata | `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, ids    | Citations in `ask` / `--json`                                                          |
-
-
-You should see counts by format (`md`, `html`, `pdf`, `txt`, `json`) and the FAISS path.
-
-**3. Ask (retrieves from FAISS, prints citations)**
-
-```powershell
+```bash
 python -m harborline.cli ask "How many PTO days do I get after my second anniversary?"
 python -m harborline.cli ask "Can I use PTO tomorrow?" --employee-id EMP-1014
 python -m harborline.cli ask "What is the US hotel cap?" --json
 python -m harborline.cli ask "Should I buy bitcoin with my bonus?"
-```
-
-The last example is **out of corpus** and is refused.
-
-**Complex (multi-document) question** — PTO + holidays + hub office days:
-
-```powershell
 python -m harborline.cli ask "I live 32 miles from the Seattle office and want PTO Wednesday through Friday of Thanksgiving week 2026. Do I lose PTO hours for the company holidays, and do I still owe three office days that week?"
 ```
 
-Optional filters: `--kind policy` or `--kind structured`, plus `--source-format md`.
+Optional filters: `--kind policy`, `--kind structured`, `--source-format md`.
 
-### Generated answers (optional LLM)
+Skipping ingest makes the first `ask` embed on the fly. Set `HARBORLINE_RETRIEVE_BACKEND=tfidf` to skip the embedding model entirely (this is what pytest and CI use).
 
-Retrieval, rewrite, rerank, citations, and guardrails **do not need an API key**.
+**LLM answers** keep the same retrieval, rewrite, rerank, citations, and guardrails. Put `OPENAI_API_KEY` in `.env`, set `HARBORLINE_ANSWER_MODE=llm`, and rerun `ask`. Temperature is `0` and `seed` is `42`. The written answer is structured as policy fact, citations, and a note that it is not a recommendation. Set `OPENAI_BASE_URL` for Azure or another gateway.
 
-To have the model write a **Policy fact / Citations / Not a recommendation** answer:
+## Agent
 
-1. Create an OpenAI account (or any OpenAI-compatible endpoint).
-2. Copy `.env.example` to `.env` locally.
-3. Set `OPENAI_API_KEY` in `.env` (never commit `.env`, never paste the key into chat). Leave `HARBORLINE_ANSWER_MODE` unset. A key only in Cursor Settings → Models is not read.
-4. Restart the app (and Cursor, if it launched the MCP server) so the process reloads `.env`.
-5. Run the same `ask` commands, or use People Desk. Temperature is `0` and `seed` is `42`. `GET /health` should report `answer_mode` `llm`.
+`python -m harborline.cli agent` picks a workflow, decides whether retrieval alone is enough, calls MCP tools, and prints an operational trace: discovered tools, selected tools, arguments, output summaries, sources, and any escalation. The trace is a log of those steps.
 
-Azure or a gateway: also set `OPENAI_BASE_URL`.
+```bash
+python -m harborline.cli agent "Am I eligible for fully remote work living in Tacoma?" --employee-id EMP-1008 --backend tfidf
+python -m harborline.cli agent "Can I take PTO next week?" --employee-id EMP-1014 --backend tfidf
+python -m harborline.cli agent "Can I take PTO next week?" --employee-id EMP-1014 --backend tfidf --transport mcp-inproc
+```
 
-If you skip ingest, the first `ask` will embed on the fly (slower). Run ingest once.
+Default transport is **stdio**: the CLI spawns `python -m harborline.mcp_server`. `--transport mcp-inproc` stays in one process (pytest and `/chat` use this). Missing employee ids, thin policy evidence, ambiguous requests, and an unavailable MCP bus return a clarification or escalation. `--confirm` accepts a **session-only MOCK** ticket or email id in that process. It does not update `data/tickets.json`.
 
-**Fallback without embeddings:** set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `.env`.
+Direct tool calls (debugging the implementation, not the agent path):
 
-## Local run (HTTP)
+```bash
+python -m harborline.cli mcp-probe --transport mcp-stdio --backend tfidf
+python -m harborline.cli tool lookup_employee_profile EMP-1008
+python -m harborline.cli tool search_policy_documents "PTO carryover 40 hours" --kind policy --backend tfidf
+python -m harborline.cli tool get_policy_section POL-PTO-001 --section Eligibility
+python -m harborline.cli tool create_mock_hr_ticket --topic pto_request --employee-id EMP-1008 --summary "Friday off"
+```
 
-Run ingest first, then:
+## People Desk (HTTP)
 
-```powershell
+Run ingest first when the backend is FAISS, then:
+
+```bash
 uvicorn harborline.api:app --reload --port 8000
 ```
 
-Open **[http://127.0.0.1:8000](http://127.0.0.1:8000)** for the People Desk chat UI. The two demo buttons load `GET /demos` and run `POST /demos/{id}`. The same questions also work on `POST /chat`.
+Open [http://127.0.0.1:8000](http://127.0.0.1:8000). The page has two grader demos (EMP-1008 remote eligibility, EMP-1014 PTO). The same calls over HTTP:
 
-```powershell
+```bash
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/demos
 curl -X POST http://127.0.0.1:8000/demos/remote-emp-1008
@@ -194,162 +190,127 @@ curl -X POST http://127.0.0.1:8000/chat -H "Content-Type: application/json" -d "
 curl -X POST http://127.0.0.1:8000/ask -H "Content-Type: application/json" -d "{\"query\":\"When does the 401k match vest?\"}"
 ```
 
-`GET /health` reports `app`, `answer_mode`, `answer_mode_detail`, plus `mcp.available` and discovered tool names. `POST /demos/{id}` and `POST /chat` run the MCP orchestrator and return `answer`, `citations`, `snippets`, and `trace`. With no API key those answers stay extractive. With `OPENAI_API_KEY` set and answer mode left unset, the same MCP evidence is worded by the model. Repeating a demo returns the same answer and the same policy file in every citation while mode stays retrieve. `POST /ask` skips the agent and answers from retrieval (llm wording when that mode is active).
+| Route | Behavior |
+| --- | --- |
+| `GET /` | People Desk chat UI |
+| `GET /health` | App status plus `mcp.available` and discovered tool names |
+| `GET /demos` | The two grader prompts |
+| `POST /chat` | MCP agent. Returns `answer`, `citations`, `snippets`, and `trace` |
+| `POST /ask` | Retrieve-only. No agent |
+| `GET /eval` | Seeded retrieval eval (`recall@k`) |
 
-| Demo | What it does | Tools |
-| --- | --- | --- |
-| `remote-emp-1008` | Alex Kim (Tacoma, hub) asks about fully remote work | `lookup_employee_profile`, `search_policy_documents`, `get_policy_section` (POL-RMT-003), `check_policy_compliance` |
-| `benefits-emp-1008` | Alex Kim's medical plan and 401(k) deferral | `search_policy_documents`, `get_policy_section` (POL-BEN-006 medical and retirement), `lookup_benefits_status` |
+## MCP
+
+Full write-up: [docs/mcp.md](docs/mcp.md). Server entrypoint: `python -m harborline.mcp_server` (FastMCP, name `harborline`).
+
+| Transport | How it runs |
+| --- | --- |
+| **stdio** (default) | Cursor or the CLI spawns `.venv` Python with `-m harborline.mcp_server` |
+| **mcp-inproc** | Same FastMCP object in-process (`list_tools` + `call_tool`) |
+| **streamable-http** / **sse** | You start it: `python -m harborline.mcp_server --transport streamable-http --host 127.0.0.1 --port 8765` (endpoint `http://127.0.0.1:8765/mcp`) |
+
+`.cursor/mcp.json` already defines two servers:
+
+- `harborline` — stdio via `${workspaceFolder}/.venv/Scripts/python.exe` (Windows). On macOS/Linux change `command` to `${workspaceFolder}/.venv/bin/python`. Env sets retrieve mode and FAISS. `envFile` points at `.env`.
+- `harborline-http` — Streamable HTTP at `http://127.0.0.1:18765/mcp/`. Start the server on that port yourself if you use this entry (`--port 18765`).
+
+Eight tools: `search_policy_documents`, `get_policy_section`, `check_policy_compliance`, `lookup_employee_profile`, `check_pto_balance`, `lookup_benefits_status`, `create_mock_hr_ticket`, `draft_hr_email`.
+
+Steps that stay on your machine:
+
+1. Install dependencies so the Cursor-hosted process can import `mcp` and `harborline`.
+2. Enable MCP in Cursor Settings and allow the `harborline` server.
+3. Restart Cursor after editing `.cursor/mcp.json`.
+4. For FAISS inside that server, run `python -m harborline.cli ingest` once, or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`.
+5. For LLM wording, put `OPENAI_API_KEY` in `.env` and set `HARBORLINE_ANSWER_MODE=llm`.
+6. Start Streamable HTTP yourself if you want that transport. The CLI agent does not need Cursor Settings.
 
 ## Evaluation
 
-Retrieval gold items live in `eval/gold_questions.json` (**recall@k**). The fuller agent/Q&A set is `eval/eval_tasks.json` (26 tasks: policy Q&A, multi-document, tool workflows, ambiguous, out-of-scope) with gold answers.
+`eval` scores **recall@k** on `eval/gold_questions.json` (15 items): a question passes when every expected source (and employee id, when required) appears in the top-k hits.
 
-```powershell
+`report` scores `eval/eval_tasks.json` (26 tasks: 8 policy Q&A, 4 multi-document, 8 tool workflows, 3 ambiguous, 3 out of scope). It reports answer quality, agent behavior, latency, and an ablation. `--write` refreshes `eval/latest_report.json` and `eval/REPORT.md`. `--limit` samples with `HARBORLINE_SEED` (default 42).
+
+```bash
 python -m harborline.cli eval
 python -m harborline.cli eval --limit 8 --json
 python -m harborline.cli report --backend tfidf --write
 pytest
 ```
 
-`report` prints answer quality (groundedness, citation accuracy, partial match), agent behavior (tool selection, workflow completion, escalation/clarification, action safety), latency p50/p95 with a first-task cold vs later warm split, and an ablation (retrieval `top_k` 3/5/8 plus MCP tools vs retrieve-only). `--write` saves `eval/latest_report.json` and `eval/REPORT.md`. Free-tier hosts that sleep add extra cold-start time on the first HTTP hit; the local report notes that separately.
+`cli eval` uses FAISS after ingest. `pytest` and CI use TF-IDF so they stay offline.
 
-`--limit` samples with `HARBORLINE_SEED` (default 42), so two runs with the same seed and limit return the same subset.
+### Latest report
 
-`python -m harborline.cli eval` uses FAISS after ingest. `pytest` uses TF-IDF so unit tests stay offline and fast.
+Regenerate with the command above. The checked-in snapshot (`eval/REPORT.md`) is retrieve-only plus the rule-based agent, `n=26`, `seed=42`, transport `mcp-inproc`, TF-IDF backend.
 
-Heading-aware chunking is deterministic. Oversize sections use a fixed window (no shuffle). `PYTHONHASHSEED` is set when you call `Settings.apply_seeds()`.
+| Metric | Value |
+| --- | --- |
+| Groundedness | 1.0 |
+| Citation accuracy (recall of gold sources) | 0.9375 |
+| Citation precision | 0.3679 |
+| Partial match vs gold phrases | 0.7308 |
+| Tool selection accuracy | 1.0 |
+| Workflow completion | 0.9231 |
+| Escalation / clarification accuracy | 0.9231 |
+| Action-safety pass rate | 1.0 |
+| Latency (n=16) | p50 145.1 ms, p95 394.1 ms |
+| Cold first task / warm p50 / warm p95 | 637.3 ms / 131.6 ms / 259.2 ms |
+| Retrieval recall by `top_k` | 3 → 0.875, 5 → 0.9792, 8 → 1.0 |
+| Tool-family partial match (n=8) | MCP agent 1.0, retrieve-only 0.375 |
+
+Groundedness counts a task when it cites a gold source, matches a gold phrase, or correctly refuses or clarifies. Partial match is the stricter check against `expected_contains`. Local latency is in-process MCP. A free-tier host that sleeps adds its own cold start (often 30–90 seconds) on the first HTTP request; that delay is not in these numbers.
+
+Two policy-QA tasks in that snapshot (`t-pto-tenure`, `t-pto-carryover`) are marked FAIL on partial phrase match while still grounded with citation recall 1.0. Per-task lines are in [eval/REPORT.md](eval/REPORT.md).
 
 ## Deployment
 
-The image serves FastAPI. Pass secrets at **runtime**; do not bake keys into the image.
+The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to FAISS and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`.
 
-```powershell
+```bash
 docker build -t harborline-qa .
 docker run --rm -p 8000:8000 --env-file .env harborline-qa
-```
-
-Or inject a single key:
-
-```powershell
 docker run --rm -p 8000:8000 -e HARBORLINE_ANSWER_MODE=retrieve harborline-qa
 ```
 
-Health check: `GET /health`.  
-Ask: `POST /ask`.  
-Eval: `GET /eval`.
+For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the service, attach `corpus/`, `data/`, and `eval/`, and keep `HARBORLINE_SEED=42` when you want eval numbers that match local runs.
 
-For a hosted deploy (Cloud Run, App Service, Fly.io, Render), set the same env vars in the service configuration, attach `corpus/`, `data/`, and `eval/`, and keep `HARBORLINE_SEED=42` if you want eval numbers that match local runs.
+## CI
 
-## CI / CD
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request, with `HARBORLINE_RETRIEVE_BACKEND=tfidf` and seed 42.
 
-`[.github/workflows/ci.yml](.github/workflows/ci.yml)` runs on every **push** and **pull request**.
-
-1. Install `requirements.txt` + `requirements-dev.txt` and `pip install -e .`.
-2. Import/start check: load `harborline.api:app` and the MCP server factory.
-3. `pytest` including:
-  - **App start:** `GET /` and `GET /health` (`tests/test_api.py`)
-  - **MCP discovery + call:** `mcp.discovered_tools` on `/health`, plus `tests/test_mcp.py` (`tools/list` and `lookup_employee_profile`)
-4. **Deploy runs only if that test job succeeds** (`needs: test`). Pull requests never deploy. On push, CI calls a Render deploy hook **only** if you add a GitHub Actions secret named `RENDER_DEPLOY_HOOK`. Until that secret exists, the deploy job is a successful no-op (no live URL yet).
-
-CI uses `HARBORLINE_RETRIEVE_BACKEND=tfidf` so it stays offline and does not download MiniLM.
+1. Install `requirements.txt`, `requirements-dev.txt`, and `pip install -e .` on Python 3.12.
+2. Import check: load `harborline.api:app` and the MCP server factory (at least five tools).
+3. `pytest` for the API, MCP discovery and `lookup_employee_profile`, the agent, tools, ingest, retrieval eval, and generation.
+4. The deploy job runs only after that test job succeeds. Pull requests never deploy. On push, CI calls a Render deploy hook only when the `RENDER_DEPLOY_HOOK` GitHub Actions secret is set. Until then the job succeeds and does not publish a URL.
 
 ## Reproducibility
 
+| Knob | Default | Effect |
+| --- | --- | --- |
+| `HARBORLINE_SEED` | 42 | `random`, NumPy, eval sampling, LLM `seed` |
+| `HARBORLINE_CHUNK_SIZE` / `OVERLAP` | 900 / 120 | The same text always yields the same chunks |
+| `PYTHONHASHSEED` | set by `Settings.apply_seeds()` | Stable hashing in-process |
+| FAISS + MiniLM | local ONNX FastEmbed | Persistent vectors in `.cache/faiss` |
+| TF-IDF | optional | Stable sort: score descending, `chunk_id` ascending |
+| LLM | temperature 0, seed 42 | Only when `HARBORLINE_ANSWER_MODE=llm` |
 
-| Knob                                | Default              | Effect                                     |
-| ----------------------------------- | -------------------- | ------------------------------------------ |
-| `HARBORLINE_SEED`                   | 42                   | `random`, NumPy, eval sampling, LLM `seed` |
-| `HARBORLINE_CHUNK_SIZE` / `OVERLAP` | 900 / 120            | Same text always yields the same chunks    |
-| FAISS + MiniLM                      | local ONNX FastEmbed | Persistent vectors in `.cache/faiss`       |
-| TF-IDF retrieve                     | optional             | Stable sort: score desc, `chunk_id` asc    |
-
-
-
-
-## Tools and MCP
-
-Full write-up: `[docs/mcp.md](docs/mcp.md)`.
-
-The MCP server is `python -m harborline.mcp_server` (FastMCP, **stdio** by default). `.cursor/mcp.json` points Cursor at this repo's venv Python. The agent client (`harborline.mcp_client`) **discovers** tools with `tools/list` and **calls** them with `tools/call`. Hard-coded `harborline.tools` imports are not used during agent execution.
-
-**RAG / policy evidence:** `search_policy_documents`, `get_policy_section`, `check_policy_compliance`  
-**Mock HarborHub rows:** `lookup_employee_profile`, `check_pto_balance`, `lookup_benefits_status`  
-**Mock operations:** `create_mock_hr_ticket`, `draft_hr_email` (never persist; `--confirm` is session-only)
-
-```powershell
-python -m harborline.cli mcp-probe --transport mcp-stdio --backend tfidf
-python -m harborline.cli tool lookup_employee_profile EMP-1008
-python -m harborline.cli tool search_policy_documents "PTO carryover 40 hours" --kind policy --backend tfidf
-python -m harborline.cli tool get_policy_section POL-PTO-001 --section Eligibility
-python -m harborline.cli tool create_mock_hr_ticket --topic pto_request --employee-id EMP-1008 --summary "Friday off"
-```
-
-`--confirm` only stores a **session-only MOCK** id. Nothing is written to `data/tickets.json` or any live HRIS.
-
-Optional localhost MCP (EXTERNAL: you start this process):
-
-```powershell
-python -m harborline.mcp_server --transport streamable-http --port 8765
-```
-
-
-
-### EXTERNAL — enable MCP in Cursor (this chat cannot do this)
-
-1. Install deps so the `mcp` package is present (`pip install -r requirements.txt` and `pip install -e .`).
-2. Confirm `.cursor/mcp.json` exists (already in the repo).
-3. **You** enable MCP in **Cursor Settings** and allow the `harborline` server.
-4. **You** restart Cursor after editing `mcp.json`.
-5. For FAISS inside the Cursor-hosted server, **you** run ingest once (or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`).
-6. LLM wording: **you** put `OPENAI_API_KEY` in a local `.env` (never commit it). Do not also set `HARBORLINE_ANSWER_MODE=retrieve`. A key saved only in Cursor Settings → Models does not reach this server. Restart Cursor after editing `.env`.
-7. Streamable HTTP is not started by Cursor unless **you** launch it and add the URL.
-
-The CLI agent does **not** need Cursor Settings. Default transport is stdio (`python -m harborline.cli agent`). Use `--transport mcp-inproc` to stay in one process.
-
-## Agent orchestrator
-
-`python -m harborline.cli agent` interprets intent, decides whether RAG alone is enough, calls **MCP-exposed** tools, and prints a **visible operational trace** (discovered tools, selected tools, arguments, output summaries, retrieved sources, escalation). This is a log, not hidden chain-of-thought.
-
-The People Desk buttons run two of these workflows (`remote-emp-1008` and `benefits-emp-1008`). The same questions are stable from `POST /demos/{id}` and from `POST /chat`. Other workflows are still available from the CLI:
-
-
-| Workflow                | Example                                                    | MCP tools                                                                                               |
-| ----------------------- | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| Remote work eligibility | EMP-1008 lives in Tacoma (32 miles) and is still coded hub | `lookup_employee_profile`, `search_policy_documents`, `get_policy_section`, `check_policy_compliance`   |
-| Benefits election       | EMP-1008 is enrolled in HDHP with a 3% 401(k) deferral     | `search_policy_documents`, `get_policy_section`, `lookup_benefits_status`                               |
-| PTO request guidance    | EMP-1014 is not eligible to use PTO until 2026-10-08       | `lookup_employee_profile`, `check_pto_balance`, `get_policy_section`; submit is `create_mock_hr_ticket` |
-
-
-Also routed: expense compliance, onboarding (`get_policy_section`), and HR case triage (ticket + email are MOCK).
-
-```powershell
-# Default: spawn the MCP stdio server, then tools/list + tools/call. No API key.
-python -m harborline.cli agent "Am I eligible for fully remote work living in Tacoma?" --employee-id EMP-1008 --backend tfidf
-python -m harborline.cli agent "Can I take PTO next week?" --employee-id EMP-1014 --backend tfidf
-python -m harborline.cli agent "Can I take PTO next week?" --employee-id EMP-1014 --backend tfidf --transport mcp-inproc
-```
-
-Graceful failures: missing employee ids, incomplete policy evidence, ambiguous requests, and an unavailable MCP bus. Irreversible actions stay MOCK unless you pass `--confirm`, and even then they never persist to disk.
-
-## Project layout
+## Layout
 
 ```
-corpus/             Policy documents (md, html, txt, pdf)
-data/               Mock employees, PTO, benefits, tickets
-eval/               Gold questions
-harborline/         Parse, chunk, embed, FAISS, ask, tools, MCP server/client, agent, API
-docs/mcp.md         MCP transport, schemas, discovery
-.cursor/mcp.json    Cursor MCP server config (you still enable MCP in Settings)
-scripts/            PDF builder for companion policy sheets
-tests/              Determinism, eval, tools, and orchestrator tests
-requirements.txt    Pip pins
-requirements-dev.txt
-environment.yml     Conda env
-pyproject.toml      Package metadata
-.env.example        Secret names only
+corpus/                  Policies (md, html, txt, pdf) and corpus/README.md
+data/                    Mock offices, employees, PTO, benefits, tickets
+eval/                    gold_questions.json, eval_tasks.json, REPORT.md
+harborline/              Parse, chunk, embed, FAISS, ask, tools, MCP, agent, API, static UI
+docs/mcp.md              MCP transport, schemas, discovery
+.cursor/mcp.json         Cursor MCP config (enable the server in Settings)
+scripts/build_pdfs.py    Rebuild the companion PDFs
+tests/                   Ingest, eval, tools, MCP, agent, API
+.github/workflows/ci.yml Install, test, then optional Render deploy
+requirements.txt         Runtime pins
+requirements-dev.txt     pytest, httpx
+environment.yml          Conda env
+pyproject.toml           Package metadata (harborline 0.1.0)
+.env.example             Variable names only
 Dockerfile
 ```
-
-
-
