@@ -91,8 +91,8 @@ FastMCP derives JSON Schema from those function signatures. Example for `search_
       "command": "${workspaceFolder}/.venv/Scripts/python.exe",
       "args": ["-m", "harborline.mcp_server"],
       "cwd": "${workspaceFolder}",
+      "envFile": "${workspaceFolder}/.env",
       "env": {
-        "HARBORLINE_ANSWER_MODE": "retrieve",
         "HARBORLINE_RETRIEVE_BACKEND": "faiss",
         "PYTHONUNBUFFERED": "1"
       }
@@ -109,6 +109,6 @@ On macOS/Linux the command is `${workspaceFolder}/.venv/bin/python`.
 2. **Restart Cursor** after any `.cursor/mcp.json` change so the stdio process is relaunched.
 3. Confirm `.venv` exists and `pip install -r requirements.txt` plus `pip install -e .` have been run so `mcp` and `harborline` import in the server process.
 4. For FAISS retrieval in the Cursor-hosted server, run `python -m harborline.cli ingest` once (or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`).
-5. LLM-worded answers are optional: put `OPENAI_API_KEY` only in a local `.env` and set `HARBORLINE_ANSWER_MODE=llm`. Never commit the key.
+5. LLM-worded answers: put `OPENAI_API_KEY` only in a local `.env`. Leave `HARBORLINE_ANSWER_MODE` unset so the server selects `llm`. Do not set `HARBORLINE_ANSWER_MODE` inside `env` in `mcp.json` — that block overrides `envFile` and would pin retrieve mode even when `.env` has a key. A key saved only in Cursor Settings → Models is for Cursor's chat, not this process. Never commit the key.
 6. If you want Streamable HTTP instead of stdio, **you** start `python -m harborline.mcp_server --transport streamable-http` and add that URL in Cursor MCP settings.
 7. A real HarborHub / email / ticket write is **not** in scope. `confirm=true` is still a session-only mock.

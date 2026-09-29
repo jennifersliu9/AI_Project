@@ -77,24 +77,75 @@ def retrieve_answer(query: str, hits: list[Hit]) -> str:
     return "\n".join(lines)
 
 
-def llm_answer(query: str, hits: list[Hit], settings: Settings, employee_id: str | None) -> str:
+def _openai_client(settings: Settings):
     from openai import OpenAI
 
     key = settings.require_llm_key()
     client_kwargs = {"api_key": key}
     if settings.openai_base_url:
         client_kwargs["base_url"] = settings.openai_base_url
-    client = OpenAI(**client_kwargs)
+    return OpenAI(**client_kwargs)
+
+
+def _complete(settings: Settings, system: str, user: str) -> str:
+    client = _openai_client(settings)
     response = client.chat.completions.create(
         model=settings.openai_model,
         temperature=0,
         seed=settings.seed,
         messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": user_prompt(query, hits, employee_id)},
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
         ],
     )
     return (response.choices[0].message.content or "").strip()
+
+
+def llm_answer(query: str, hits: list[Hit], settings: Settings, employee_id: str | None) -> str:
+    return _complete(settings, SYSTEM_PROMPT, user_prompt(query, hits, employee_id))
+
+
+def _format_dict_sources(sources: list[dict]) -> str:
+    if not sources:
+        return "(none)"
+    blocks = []
+    for i, src in enumerate(sources, start=1):
+        blocks.append(
+            f"[{i}] title={src.get('title')}\n"
+            f"section={src.get('section')}\n"
+            f"path={src.get('source_path')}\n"
+            f"snippet={src.get('snippet') or src.get('text') or ''}"
+        )
+    return "\n\n".join(blocks)
+
+
+_REWRITE_SYSTEM = SYSTEM_PROMPT + """
+The draft and tool notes already checked Harborline records through MCP tools.
+Keep every concrete fact from the draft that appears in the tool notes or sources:
+employee names, ids, balances, dates, verdicts, and any MOCK or confirmation status.
+Do not add policy numbers, amounts, or dates that are not in the draft or sources.
+"""
+
+
+def llm_rewrite_answer(
+    query: str,
+    draft: str,
+    sources: list[dict],
+    tool_notes: list[str],
+    settings: Settings,
+    employee_id: str | None,
+) -> str:
+    """Turn an MCP tool draft into a cited model answer. Requires OPENAI_API_KEY."""
+    notes = "\n".join(f"- {note}" for note in tool_notes) or "(none)"
+    who = employee_id or "(none)"
+    user = (
+        f"Question:\n{query}\n\n"
+        f"Employee id: {who}\n\n"
+        f"Tool notes:\n{notes}\n\n"
+        f"Draft answer (facts already checked):\n{draft}\n\n"
+        f"Retrieved sources:\n{_format_dict_sources(sources)}\n"
+    )
+    return _complete(settings, _REWRITE_SYSTEM, user)
 
 
 def ask(

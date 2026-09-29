@@ -10,6 +10,8 @@ import re
 from dataclasses import dataclass, field
 from typing import Any
 
+from harborline.answer import llm_rewrite_answer
+from harborline.config import get_settings
 from harborline.guardrails import is_out_of_scope
 from harborline.mcp_client import McpToolBus, open_mcp_bus
 
@@ -106,6 +108,7 @@ class AgentResult:
     steps: list[TraceStep] = field(default_factory=list)
     tool_transport: str = "mcp-stdio"
     discovered_tools: list[str] = field(default_factory=list)
+    answer_mode: str = "retrieve"
 
     def to_dict(self) -> dict:
         return {
@@ -115,6 +118,7 @@ class AgentResult:
             "rag_alone_enough": self.rag_alone_enough,
             "tool_transport": self.tool_transport,
             "discovered_tools": self.discovered_tools,
+            "answer_mode": self.answer_mode,
             "needs_clarification": self.needs_clarification,
             "escalation": self.escalation,
             "pending_confirmation": self.pending_confirmation,
@@ -220,6 +224,38 @@ def _summarize(name: str, payload: dict) -> str:
     return "ok"
 
 
+_KEEP_DRAFT_REASONS = {
+    "tool_bus_unavailable",
+    "missing_employee_record",
+    "incomplete_policy_evidence",
+}
+
+
+def _finish_answer(result: AgentResult, employee_id: str | None) -> None:
+    """Use the model when a key is configured. Refusals stay on the draft."""
+    settings = get_settings()
+    result.answer_mode = settings.answer_mode
+    if settings.answer_mode != "llm" or not settings.openai_api_key:
+        return
+    if result.needs_clarification or not (result.answer or "").strip():
+        return
+    reason = (result.escalation or {}).get("reason")
+    if reason in _KEEP_DRAFT_REASONS:
+        return
+    notes = [f"{step.tool}: {step.output_summary}" for step in result.steps]
+    try:
+        result.answer = llm_rewrite_answer(
+            result.query,
+            result.answer,
+            result.sources,
+            notes,
+            settings,
+            employee_id,
+        )
+    except Exception:
+        return
+
+
 def _record(result: AgentResult, name: str, args: dict, payload: dict) -> dict:
     ok = "error" not in payload and payload.get("ok", True) is not False
     if name in {"lookup_employee_profile", "check_pto_balance", "lookup_benefits_status"}:
@@ -278,6 +314,7 @@ def run_agent(
         discovered_tools=list(getattr(bus, "discovered_tools", []) or []),
     )
 
+    failed = False
     try:
         if not bus.available:
             result.answer = (
@@ -313,7 +350,12 @@ def run_agent(
         else:
             _run_policy_qa(result, bus, query, eid)
         return result
+    except Exception:
+        failed = True
+        raise
     finally:
+        if not failed:
+            _finish_answer(result, eid)
         if owns_bus:
             bus.close()
 
@@ -326,6 +368,16 @@ def _collect_sources(*payloads: dict) -> list[dict]:
         sources.extend(payload.get("sections") or [])
         sources.extend(payload.get("sources") or [])
     return sources
+
+
+def _canonical_sections(*payloads: dict) -> list[dict]:
+    """Sections from the declaring policy document, ignoring RAG fallbacks."""
+    sections: list[dict] = []
+    for payload in payloads:
+        if payload.get("fallback") == "rag" or not payload.get("found"):
+            continue
+        sections.extend(payload.get("sections") or [])
+    return sections
 
 
 def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | None) -> None:
@@ -359,6 +411,16 @@ def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | Non
             kind="policy",
         ),
     )
+    section = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-RMT-003", "section": "Location categories"},
+        bus.call(
+            "get_policy_section",
+            policy_id="POL-RMT-003",
+            section="Location categories",
+        ),
+    )
     compliance = _record(
         result,
         "check_policy_compliance",
@@ -370,7 +432,7 @@ def _run_remote(result: AgentResult, bus: McpToolBus, query: str, eid: str | Non
             policy_id="POL-RMT-003",
         ),
     )
-    result.sources = _collect_sources(search, compliance)
+    result.sources = _canonical_sections(section) or _collect_sources(search, compliance)
     emp = lookup["employee"]
     cat = emp.get("location_category")
     miles = emp.get("miles_from_assigned_hub")
@@ -597,7 +659,19 @@ def _run_benefits(result: AgentResult, bus: McpToolBus, query: str, eid: str | N
             kind="policy",
         ),
     )
-    result.sources = _collect_sources(search)
+    medical = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-BEN-006", "section": "US medical"},
+        bus.call("get_policy_section", policy_id="POL-BEN-006", section="US medical"),
+    )
+    retirement = _record(
+        result,
+        "get_policy_section",
+        {"policy_id": "POL-BEN-006", "section": "Retirement"},
+        bus.call("get_policy_section", policy_id="POL-BEN-006", section="Retirement"),
+    )
+    result.sources = _canonical_sections(medical, retirement) or _collect_sources(search)
     extra = ""
     if eid:
         benefits = _record(

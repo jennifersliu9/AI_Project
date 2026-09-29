@@ -9,8 +9,9 @@ def test_home_serves_chat_ui():
     res = client.get("/")
     assert res.status_code == 200
     assert "Harborline People Desk" in res.text
-    assert "demo-remote" in res.text
-    assert "demo-pto" in res.text
+    assert 'id="demo-list"' in res.text
+    assert 'fetch("/demos")' in res.text
+    assert "/demos/" in res.text
 
 
 def test_health_includes_mcp():
@@ -18,6 +19,8 @@ def test_health_includes_mcp():
     assert res.status_code == 200
     body = res.json()
     assert body["app"] == "ok"
+    assert body["answer_mode"] == "retrieve"
+    assert "retrieve" in body["answer_mode_detail"]
     assert "mcp" in body
     assert body["mcp"]["available"] is True
     assert "search_policy_documents" in body["mcp"]["discovered_tools"]
@@ -26,35 +29,62 @@ def test_health_includes_mcp():
 def test_demos_list():
     res = client.get("/demos")
     assert res.status_code == 200
-    ids = [d["id"] for d in res.json()["demos"]]
-    assert ids == ["remote-emp-1008", "pto-emp-1014"]
+    demos = res.json()["demos"]
+    ids = [d["id"] for d in demos]
+    assert ids == ["remote-emp-1008", "benefits-emp-1008"]
+    assert len({d["query"] for d in demos}) == 2
+    for demo in demos:
+        assert demo["query"]
+        assert demo["employee_id"]
+        assert demo["curl"].endswith(f"/demos/{demo['id']}")
+        assert demo["chat"] == {"query": demo["query"], "employee_id": demo["employee_id"]}
 
 
-def test_chat_remote_demo():
-    res = client.post(
-        "/chat",
-        json={
-            "query": "Am I eligible for fully remote work living in Tacoma?",
-            "employee_id": "EMP-1008",
-        },
-    )
-    assert res.status_code == 200
-    body = res.json()
-    assert "Alex Kim" in body["answer"]
-    assert body["citations"]
-    assert body["snippets"]
-    tools = [step["tool"] for step in body["trace"]]
-    assert "lookup_employee_profile" in tools
-    assert "search_policy_documents" in tools
+def _assert_stable_demo(demo: dict) -> dict:
+    first = client.post(f"/demos/{demo['id']}")
+    second = client.post(f"/demos/{demo['id']}")
+    chat = client.post("/chat", json=demo["chat"])
+    assert first.status_code == second.status_code == chat.status_code == 200
+    a, b, c = first.json(), second.json(), chat.json()
+    assert a["demo_id"] == demo["id"]
+    assert a["answer"] == b["answer"] == c["answer"]
+    assert a["answer"]
+    assert [step["tool"] for step in a["trace"]] == [step["tool"] for step in b["trace"]]
+    assert [step["tool"] for step in a["trace"]] == [step["tool"] for step in c["trace"]]
+    assert all(step["ok"] for step in a["trace"])
+    paths = [item["source_path"] for item in a["citations"]]
+    assert paths
+    assert paths == [item["source_path"] for item in b["citations"]]
+    assert paths == [item["source_path"] for item in c["citations"]]
+    assert all(demo["citation_source"] in path for path in paths)
+    assert a["snippets"]
+    return a
 
 
-def test_chat_pto_demo():
-    res = client.post(
-        "/chat",
-        json={"query": "Can I take PTO next week?", "employee_id": "EMP-1014"},
-    )
-    assert res.status_code == 200
-    body = res.json()
-    assert "Devon Walsh" in body["answer"]
-    assert body["trace"]
-    assert body["citations"] or body["snippets"]
+def test_remote_and_benefits_demos_match_chat():
+    demos = client.get("/demos").json()["demos"]
+    remote, benefits = demos
+    remote_body = _assert_stable_demo(remote)
+    benefits_body = _assert_stable_demo(benefits)
+    assert remote_body["intent"] == "remote_eligibility"
+    assert "Alex Kim" in remote_body["answer"]
+    assert "hub" in remote_body["answer"].lower()
+    remote_tools = [step["tool"] for step in remote_body["trace"]]
+    assert "lookup_employee_profile" in remote_tools
+    assert "search_policy_documents" in remote_tools
+    assert "get_policy_section" in remote_tools
+    assert "check_policy_compliance" in remote_tools
+    assert benefits_body["intent"] == "benefits"
+    assert "HDHP" in benefits_body["answer"]
+    assert "3%" in benefits_body["answer"]
+    benefits_tools = [step["tool"] for step in benefits_body["trace"]]
+    assert "lookup_benefits_status" in benefits_tools
+    assert "search_policy_documents" in benefits_tools
+    assert benefits_tools.count("get_policy_section") == 2
+    assert remote_body["answer"] != benefits_body["answer"]
+    assert [step["tool"] for step in remote_body["trace"]] != [step["tool"] for step in benefits_body["trace"]]
+
+
+def test_unknown_demo_is_404():
+    res = client.post("/demos/pto-emp-1014")
+    assert res.status_code == 404

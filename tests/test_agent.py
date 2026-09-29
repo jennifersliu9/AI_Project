@@ -28,7 +28,9 @@ def test_remote_eligibility_workflow_via_mcp():
     assert "lookup_employee_profile" in result.discovered_tools
     tools = [s.tool for s in result.steps]
     assert tools[:2] == ["lookup_employee_profile", "search_policy_documents"]
+    assert "get_policy_section" in tools
     assert "check_policy_compliance" in tools
+    assert {src.get("source_path") for src in result.sources} == {"corpus/03-remote-hybrid-work.md"}
     assert all(s.ok for s in result.steps[:2])
     assert result.sources
     assert "Alex Kim" in result.answer

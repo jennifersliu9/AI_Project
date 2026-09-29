@@ -131,25 +131,11 @@ class StdioMcpBus(McpToolBus):
         from mcp.client.stdio import stdio_client
 
         self._closed = asyncio.Event()
-        env = {
-            "HARBORLINE_ANSWER_MODE": os.environ.get("HARBORLINE_ANSWER_MODE", "retrieve"),
-            "HARBORLINE_RETRIEVE_BACKEND": os.environ.get("HARBORLINE_RETRIEVE_BACKEND", "faiss"),
-            "HARBORLINE_REWRITE": os.environ.get("HARBORLINE_REWRITE", "true"),
-            "HARBORLINE_RERANK": os.environ.get("HARBORLINE_RERANK", "true"),
-            "PYTHONUNBUFFERED": "1",
-            "PYTHONPATH": os.environ.get("PYTHONPATH", str(ROOT)),
-            "VIRTUAL_ENV": os.environ.get("VIRTUAL_ENV", ""),
-            "FASTEMBED_CACHE_PATH": os.environ.get(
-                "FASTEMBED_CACHE_PATH", str(ROOT / ".cache" / "fastembed")
-            ),
-            "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
-        }
-        env.update(self._extra_env)
         params = StdioServerParameters(
             command=sys.executable,
             args=["-m", "harborline.mcp_server", "--transport", "stdio"],
             cwd=str(ROOT),
-            env={k: v for k, v in env.items() if v},
+            env=stdio_server_env(self._extra_env),
         )
         try:
             async with stdio_client(params) as (read, write):
@@ -212,6 +198,35 @@ class StdioMcpBus(McpToolBus):
         if closed is not None and self._loop.is_running():
             self._loop.call_soon_threadsafe(closed.set)
         self._thread.join(timeout=15)
+
+
+def stdio_server_env(extra_env: dict[str, str] | None = None) -> dict[str, str]:
+    """Environment for the spawned MCP server.
+
+    Do not default HARBORLINE_ANSWER_MODE to retrieve. An explicit parent value
+    is forwarded; otherwise the child reads `.env` and uses llm when
+    OPENAI_API_KEY is set.
+    """
+    env = {
+        "HARBORLINE_RETRIEVE_BACKEND": os.environ.get("HARBORLINE_RETRIEVE_BACKEND", "faiss"),
+        "HARBORLINE_REWRITE": os.environ.get("HARBORLINE_REWRITE", "true"),
+        "HARBORLINE_RERANK": os.environ.get("HARBORLINE_RERANK", "true"),
+        "PYTHONUNBUFFERED": "1",
+        "PYTHONPATH": os.environ.get("PYTHONPATH", str(ROOT)),
+        "VIRTUAL_ENV": os.environ.get("VIRTUAL_ENV", ""),
+        "FASTEMBED_CACHE_PATH": os.environ.get(
+            "FASTEMBED_CACHE_PATH", str(ROOT / ".cache" / "fastembed")
+        ),
+        "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+    }
+    if os.environ.get("HARBORLINE_ANSWER_MODE"):
+        env["HARBORLINE_ANSWER_MODE"] = os.environ["HARBORLINE_ANSWER_MODE"]
+    for name in ("OPENAI_API_KEY", "OPENAI_MODEL", "OPENAI_BASE_URL"):
+        if os.environ.get(name):
+            env[name] = os.environ[name]
+    if extra_env:
+        env.update({k: v for k, v in extra_env.items() if v})
+    return {k: v for k, v in env.items() if v}
 
 
 def open_mcp_bus(transport: str = "mcp-stdio", extra_env: dict[str, str] | None = None) -> McpToolBus:

@@ -99,7 +99,7 @@
       width: 100%;
       font-weight: 600;
     }
-    .primary:disabled { opacity: 0.55; cursor: wait; }
+    .primary:disabled, .demo:disabled { opacity: 0.55; cursor: wait; }
     .demos { display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.85rem; }
     .demo {
       background: #eef5f4;
@@ -152,11 +152,8 @@
         <input id="employee" placeholder="EMP-1008" />
       </div>
       <button class="primary" id="ask" type="button">Ask People Desk</button>
-      <p class="hint">Grader demos (same payloads as POST /chat):</p>
-      <div class="demos">
-        <button class="demo" id="demo-remote" type="button">Demo 1 · Remote eligibility · EMP-1008</button>
-        <button class="demo" id="demo-pto" type="button">Demo 2 · PTO guidance · EMP-1014</button>
-      </div>
+      <p class="hint">Two agent tasks. The buttons call POST /demos/{id}. The same questions are on POST /chat.</p>
+      <div class="demos" id="demo-list"></div>
       <div class="status" id="health">Checking /health…</div>
     </section>
     <section class="panel" id="out">
@@ -165,16 +162,6 @@
   </main>
   <script>
     const $ = (id) => document.getElementById(id);
-    const DEMOS = {
-      remote: {
-        query: "Am I eligible for fully remote work living in Tacoma?",
-        employee_id: "EMP-1008",
-      },
-      pto: {
-        query: "Can I take PTO next week?",
-        employee_id: "EMP-1014",
-      },
-    };
 
     async function loadHealth() {
       try {
@@ -182,10 +169,12 @@
         const data = await res.json();
         const mcp = data.mcp || {};
         const ok = data.app === "ok" && mcp.available;
+        const mode = data.answer_mode_detail || data.answer_mode || "retrieve";
         $("health").innerHTML =
           `<span class="dot ${ok ? "ok" : "bad"}"></span>` +
           `app=${data.app || data.status} · mcp=${mcp.available ? "connected" : "unavailable"}` +
-          (mcp.tool_count != null ? ` · ${mcp.tool_count} tools` : "");
+          (mcp.tool_count != null ? ` · ${mcp.tool_count} tools` : "") +
+          ` · answers=${escapeHtml(mode)}`;
       } catch (err) {
         $("health").innerHTML = `<span class="dot bad"></span>health check failed`;
       }
@@ -193,16 +182,17 @@
 
     function render(data) {
       const citations = (data.citations || []).map((c) =>
-        `<li>[${c.n}] ${c.title || ""} — ${c.section || ""} <span class="hint">(${c.source_path || ""})</span></li>`
+        `<li>[${c.n}] ${escapeHtml(c.title || "")} — ${escapeHtml(c.section || "")} <span class="hint">(${escapeHtml(c.source_path || "")})</span></li>`
       ).join("");
       const snippets = (data.snippets || []).map((s) =>
-        `<p class="snippet">[${s.n}] ${s.snippet}</p>`
+        `<p class="snippet">[${s.n}] ${escapeHtml(s.snippet)}</p>`
       ).join("");
       const trace = (data.trace || []).map((t, i) =>
-        `<li>step ${i + 1}: ${t.tool} ok=${t.ok} — ${t.output_summary || ""}</li>`
+        `<li>step ${i + 1}: ${escapeHtml(t.tool)} ok=${t.ok} — ${escapeHtml(t.output_summary || "")}</li>`
       ).join("");
+      const demoMeta = data.demo_id ? ` · demo=${escapeHtml(data.demo_id)}` : "";
       $("out").innerHTML = `
-        <p class="meta">intent=${data.intent || ""} · workflow=${data.workflow || ""} · transport=${data.tool_transport || ""}</p>
+        <p class="meta">intent=${escapeHtml(data.intent || "")} · workflow=${escapeHtml(data.workflow || "")} · transport=${escapeHtml(data.tool_transport || "")} · answers=${escapeHtml(data.answer_mode || "")}${demoMeta}</p>
         <h2>Answer</h2>
         <div class="answer">${escapeHtml(data.answer || "")}</div>
         <h2>Citations</h2>
@@ -221,8 +211,15 @@
         .replaceAll(">", "&gt;");
     }
 
+    function setBusy(busy) {
+      $("ask").disabled = busy;
+      document.querySelectorAll(".demo").forEach((btn) => {
+        btn.disabled = busy;
+      });
+    }
+
     async function send(query, employeeId) {
-      $("ask").disabled = true;
+      setBusy(true);
       $("out").innerHTML = `<p class="empty">Calling POST /chat…</p>`;
       try {
         const res = await fetch("/chat", {
@@ -234,26 +231,66 @@
           }),
         });
         const data = await res.json();
-        if (!res.ok) throw new Error(data.detail || res.statusText);
+        if (!res.ok) throw new Error(formatDetail(data.detail) || res.statusText);
         render(data);
       } catch (err) {
         $("out").innerHTML = `<p class="empty">Request failed: ${escapeHtml(err.message)}</p>`;
       } finally {
-        $("ask").disabled = false;
+        setBusy(false);
+      }
+    }
+
+    function formatDetail(detail) {
+      if (detail == null) return "";
+      if (typeof detail === "string") return detail;
+      try { return JSON.stringify(detail); } catch (err) { return String(detail); }
+    }
+
+    async function runDemo(demo) {
+      $("query").value = demo.query;
+      $("employee").value = demo.employee_id || "";
+      setBusy(true);
+      $("out").innerHTML = `<p class="empty">Calling POST /demos/${escapeHtml(demo.id)}…</p>`;
+      try {
+        const res = await fetch("/demos/" + encodeURIComponent(demo.id), { method: "POST" });
+        const data = await res.json();
+        if (!res.ok) throw new Error(formatDetail(data.detail) || res.statusText);
+        render(data);
+      } catch (err) {
+        $("out").innerHTML = `<p class="empty">Request failed: ${escapeHtml(err.message)}</p>`;
+      } finally {
+        setBusy(false);
+      }
+    }
+
+    async function loadDemos() {
+      const root = $("demo-list");
+      try {
+        const res = await fetch("/demos");
+        const data = await res.json();
+        const demos = data.demos || [];
+        root.replaceChildren();
+        if (!demos.length) {
+          root.textContent = "No demo tasks are configured.";
+          return;
+        }
+        for (const demo of demos) {
+          const btn = document.createElement("button");
+          btn.className = "demo";
+          btn.type = "button";
+          btn.id = "demo-" + demo.id;
+          btn.textContent = demo.label;
+          btn.title = demo.blurb || demo.query;
+          btn.addEventListener("click", () => runDemo(demo));
+          root.appendChild(btn);
+        }
+      } catch (err) {
+        root.textContent = "Could not load demo tasks from /demos.";
       }
     }
 
     $("ask").addEventListener("click", () => send($("query").value.trim(), $("employee").value.trim()));
-    $("demo-remote").addEventListener("click", () => {
-      $("query").value = DEMOS.remote.query;
-      $("employee").value = DEMOS.remote.employee_id;
-      send(DEMOS.remote.query, DEMOS.remote.employee_id);
-    });
-    $("demo-pto").addEventListener("click", () => {
-      $("query").value = DEMOS.pto.query;
-      $("employee").value = DEMOS.pto.employee_id;
-      send(DEMOS.pto.query, DEMOS.pto.employee_id);
-    });
+    loadDemos();
     loadHealth();
   </script>
 </body>
