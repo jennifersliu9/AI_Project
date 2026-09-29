@@ -2,7 +2,7 @@
 
 Employee Q&A for fictional **Harborline Technologies**. The repo holds a 2026 policy corpus, HarborHub-style employee records, and a seeded retrieval app that answers questions about PTO, holidays, remote work, expenses, security, benefits, onboarding, equipment, leave, and conduct.
 
-Default answer mode is **retrieve-only**: retrieval quotes the corpus instead of asking a chat model to write the answer. The default retrieval backend calls OpenAI `text-embedding-3-small` and stores vectors in Pinecone, so `OPENAI_API_KEY` and `PINECONE_API_KEY` are required unless you set `HARBORLINE_RETRIEVE_BACKEND=tfidf`. Set `HARBORLINE_ANSWER_MODE=llm` when you also want a model to write the answer. Tickets and emails are session-only mocks; nothing is written to HarborHub or to `data/tickets.json`.
+When `OPENAI_API_KEY` is set and `HARBORLINE_ANSWER_MODE` is left unset, answers are written by the chat model. With no key, answers stay extractive. The default retrieval backend calls OpenAI `text-embedding-3-small` and stores vectors in Pinecone, so `OPENAI_API_KEY` and `PINECONE_API_KEY` are required unless you set `HARBORLINE_RETRIEVE_BACKEND=tfidf`. Set `HARBORLINE_ANSWER_MODE=retrieve` to keep extractive answers even when a key is present. Tickets and emails are session-only mocks; nothing is written to HarborHub or to `data/tickets.json`.
 
 Deeper references:
 
@@ -113,7 +113,7 @@ cp .env.example .env
 | `PINECONE_API_KEY` | For Pinecone retrieval | empty | Hosted vector index |
 | `PINECONE_INDEX_HOST` | Host or name | empty | Data-plane host. Or set `PINECONE_INDEX_NAME` |
 | `PINECONE_NAMESPACE` | No | `harborline` | Namespace replaced on ingest |
-| `HARBORLINE_ANSWER_MODE` | No | `retrieve` | `retrieve` or `llm` |
+| `HARBORLINE_ANSWER_MODE` | No | `llm` when `OPENAI_API_KEY` is set, otherwise `retrieve` | `retrieve` or `llm` |
 | `HARBORLINE_SEED` | No | `42` | Eval sampling and LLM seed |
 | `HARBORLINE_CHUNK_SIZE` | No | `900` | Deterministic window |
 | `HARBORLINE_CHUNK_OVERLAP` | No | `120` | Overlap between windows |
@@ -123,7 +123,7 @@ cp .env.example .env
 | `HARBORLINE_RERANK` | No | `true` | Lexical overlap plus diverse sources |
 | `HARBORLINE_MIN_SCORE` | No | `0.22` | Guardrail floor |
 | `HARBORLINE_RETRIEVE_BACKEND` | No | `pinecone` | `pinecone` or `tfidf` |
-| `HARBORLINE_EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model |
+| `HARBORLINE_EMBEDDING_MODEL` | No | `text-embedding-3-small` | Passed to `OpenAIEmbeddings` (cloud API). Local HuggingFace ids are rejected |
 
 ## RAG pipeline
 
@@ -149,7 +149,7 @@ Optional filters: `--kind policy`, `--kind structured`, `--source-format md`.
 
 Skipping ingest makes the first `ask` embed and upsert on the fly. Set `HARBORLINE_RETRIEVE_BACKEND=tfidf` to skip embeddings and the hosted index entirely (this is what pytest and CI use).
 
-**LLM answers** keep the same retrieval, rewrite, rerank, citations, and guardrails. Put `OPENAI_API_KEY` in `.env`, set `HARBORLINE_ANSWER_MODE=llm`, and rerun `ask`. Temperature is `0` and `seed` is `42`. The written answer is structured as policy fact, citations, and a note that it is not a recommendation. Set `OPENAI_BASE_URL` for Azure or another gateway.
+**LLM answers** keep the same retrieval, rewrite, rerank, citations, and guardrails. Put `OPENAI_API_KEY` in `.env` and leave `HARBORLINE_ANSWER_MODE` unset (or set it to `llm`). Temperature is `0` and `seed` is `42`. The model writes the answer from the retrieved snippets. Set `OPENAI_BASE_URL` for Azure or another gateway. `/health` reports `has_openai_key` and `llm_answers`.
 
 ## Agent
 
@@ -225,7 +225,7 @@ Steps that stay on your machine:
 2. Enable MCP in Cursor Settings and allow the `harborline` server.
 3. Restart Cursor after editing `.cursor/mcp.json`.
 4. For Pinecone inside that server, put the OpenAI and Pinecone keys in `.env` and run `python -m harborline.cli ingest` once, or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`.
-5. For LLM wording, put `OPENAI_API_KEY` in `.env` and set `HARBORLINE_ANSWER_MODE=llm`.
+5. For LLM wording, put `OPENAI_API_KEY` in `.env` and leave `HARBORLINE_ANSWER_MODE` unset.
 6. Start Streamable HTTP yourself if you want that transport. The CLI agent does not need Cursor Settings.
 
 ## Evaluation
@@ -268,7 +268,7 @@ Two policy-QA tasks in that snapshot (`t-pto-tenure`, `t-pto-carryover`) are mar
 
 ## Deployment
 
-The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to Pinecone and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`. It does not download embedding weights. On Render, set `OPENAI_API_KEY`, `PINECONE_API_KEY`, and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). The index stays in Pinecone across restarts.
+The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to Pinecone and does not pin answer mode, so a runtime `OPENAI_API_KEY` selects LLM answers. It copies `corpus/`, `data/`, and `eval/`. It does not download embedding weights. On Render, set `OPENAI_API_KEY`, `PINECONE_API_KEY`, and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). The index stays in Pinecone across restarts. `/health` reports `has_pinecone_key`, `has_pinecone_host`, the normalized `pinecone_index_host`, and `hosted_index`. `local_vector_index` is false: those settings do not build a local vector index. Explicit `HARBORLINE_RETRIEVE_BACKEND=tfidf` still uses lexical search and ignores the hosted index.
 
 ```bash
 docker build -t harborline-qa .
@@ -297,7 +297,7 @@ For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the serv
 | OpenAI embeddings | `text-embedding-3-small` | No local weight files |
 | Pinecone | hosted cosine index, dimension 1536 | Index is not loaded into process memory |
 | TF-IDF | optional | Stable sort: score descending, `chunk_id` ascending |
-| LLM | temperature 0, seed 42 | Only when `HARBORLINE_ANSWER_MODE=llm` |
+| LLM | temperature 0, seed 42 | When `OPENAI_API_KEY` is set and answer mode is not pinned to `retrieve` |
 
 ## Layout
 

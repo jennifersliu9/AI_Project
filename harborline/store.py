@@ -81,36 +81,91 @@ def vector_index_label(settings: Settings | None = None) -> str:
     return settings.retrieve_backend
 
 
-def embed_texts(texts: list[str], settings: Settings | None = None) -> list[list[float]]:
-    """Embed with OpenAI. No local model weights are loaded."""
+def _is_local_embedding_model(model: str) -> bool:
+    """HuggingFace repo ids and sentence-transformer names download weights locally."""
+    lowered = model.strip().lower()
+    if not lowered:
+        return False
+    markers = (
+        "/",
+        "sentence-transformer",
+        "sentence_transformer",
+        "huggingface",
+        "all-minilm",
+        "fastembed",
+    )
+    return any(marker in lowered for marker in markers)
+
+
+class OpenAIEmbeddings:
+    """Cloud embeddings via the OpenAI API.
+
+    This is the only embedding class. It does not construct a HuggingFace
+    pipeline and it does not load sentence-transformer weights into RAM.
+    """
+
+    provider = "openai"
+
+    def __init__(self, settings: Settings):
+        if settings.embedding_provider != self.provider:
+            raise VectorStoreError(
+                f"embedding_provider={settings.embedding_provider!r} is not supported. "
+                "This process only constructs OpenAIEmbeddings."
+            )
+        model = (settings.embedding_model or "").strip()
+        if _is_local_embedding_model(model):
+            raise VectorStoreError(
+                f"HARBORLINE_EMBEDDING_MODEL={model!r} is a local embedding model. "
+                "Embeddings use OpenAIEmbeddings, which calls the OpenAI API and "
+                "keeps no model weights in memory. Set "
+                "HARBORLINE_EMBEDDING_MODEL=text-embedding-3-small."
+            )
+        key = (settings.openai_api_key or "").strip()
+        if not key:
+            raise VectorStoreError(
+                "OPENAI_API_KEY is not set. OpenAIEmbeddings calls "
+                f"the OpenAI API for {model or 'text-embedding-3-small'} and does not "
+                "download sentence-transformer weights. Set the key, or use "
+                "HARBORLINE_RETRIEVE_BACKEND=tfidf for offline lexical search."
+            )
+        from openai import OpenAI
+
+        kwargs: dict = {"api_key": key, "timeout": 60.0}
+        if settings.openai_base_url:
+            kwargs["base_url"] = settings.openai_base_url
+        self.model = model or "text-embedding-3-small"
+        self._client = OpenAI(**kwargs)
+
+    def embed_documents(self, texts: list[str]) -> list[list[float]]:
+        if not texts:
+            return []
+        vectors: list[list[float]] = []
+        for start in range(0, len(texts), _EMBED_BATCH):
+            batch = texts[start : start + _EMBED_BATCH]
+            response = self._client.embeddings.create(model=self.model, input=batch)
+            ordered = sorted(response.data, key=lambda item: item.index)
+            if len(ordered) != len(batch):
+                raise VectorStoreError(
+                    f"OpenAI returned {len(ordered)} embeddings for {len(batch)} inputs."
+                )
+            vectors.extend(list(item.embedding) for item in ordered)
+        return vectors
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_documents([text])[0]
+
+
+def build_embeddings(settings: Settings | None = None) -> OpenAIEmbeddings:
+    """Always return OpenAIEmbeddings. No HuggingFace embeddings class exists."""
     settings = settings or get_settings()
+    return OpenAIEmbeddings(settings)
+
+
+def embed_texts(texts: list[str], settings: Settings | None = None) -> list[list[float]]:
+    """Embed with OpenAIEmbeddings. No local model weights are loaded."""
     if not texts:
         return []
-    key = (settings.openai_api_key or "").strip()
-    if not key:
-        raise VectorStoreError(
-            "OPENAI_API_KEY is not set. Embeddings are requested from "
-            f"OpenAI {settings.embedding_model} so this process does not "
-            "download sentence-transformer weights. Set the key, or use "
-            "HARBORLINE_RETRIEVE_BACKEND=tfidf for offline lexical search."
-        )
-    from openai import OpenAI
-
-    kwargs: dict = {"api_key": key, "timeout": 60.0}
-    if settings.openai_base_url:
-        kwargs["base_url"] = settings.openai_base_url
-    client = OpenAI(**kwargs)
-    vectors: list[list[float]] = []
-    for start in range(0, len(texts), _EMBED_BATCH):
-        batch = texts[start : start + _EMBED_BATCH]
-        response = client.embeddings.create(model=settings.embedding_model, input=batch)
-        ordered = sorted(response.data, key=lambda item: item.index)
-        if len(ordered) != len(batch):
-            raise VectorStoreError(
-                f"OpenAI returned {len(ordered)} embeddings for {len(batch)} inputs."
-            )
-        vectors.extend(list(item.embedding) for item in ordered)
-    return vectors
+    return build_embeddings(settings).embed_documents(texts)
 
 
 def _require_pinecone(settings: Settings) -> None:
@@ -160,8 +215,28 @@ def _normalize_host(raw: str | None) -> str:
     return host.split("/")[0]
 
 
+def pinecone_status(settings: Settings | None = None) -> dict:
+    """How the process saw PINECONE_API_KEY and PINECONE_INDEX_HOST.
+
+    When both are set and the backend is pinecone, retrieval uses the hosted
+    index. This process has no local vector index to initialize.
+    """
+    settings = settings or get_settings()
+    host = _normalize_host(settings.pinecone_index_host)
+    key_set = bool((settings.pinecone_api_key or "").strip())
+    host_set = bool(host)
+    hosted = settings.retrieve_backend == "pinecone" and key_set and host_set
+    return {
+        "has_pinecone_key": key_set,
+        "has_pinecone_host": host_set,
+        "pinecone_index_host": host or None,
+        "hosted_index": hosted,
+        "local_vector_index": False,
+    }
+
+
 def index_host(settings: Settings) -> str:
-    """Data-plane host. Resolves PINECONE_INDEX_NAME through the control plane once."""
+    """Data-plane host. An explicit PINECONE_INDEX_HOST skips any other lookup."""
     explicit = _normalize_host(settings.pinecone_index_host)
     if explicit:
         return explicit
