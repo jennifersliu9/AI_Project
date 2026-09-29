@@ -22,6 +22,8 @@ def test_health_includes_mcp():
     assert body["answer_mode"] == "retrieve"
     assert body["retrieve_backend"] == "tfidf"
     assert body["vector_index"] == "local:tfidf"
+    assert body["embedding_provider"] == "openai"
+    assert body["embedding_class"] == "OpenAIEmbeddings"
     assert body["embedding_model"] == "text-embedding-3-small"
     assert "retrieve" in body["answer_mode_detail"]
     assert "mcp" in body

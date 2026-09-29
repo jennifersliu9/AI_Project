@@ -17,6 +17,8 @@ load_dotenv(ROOT / ".env")
 
 # pinecone: OpenAI embeddings + hosted index. tfidf: offline, no API keys.
 RETRIEVE_BACKENDS = ("pinecone", "tfidf")
+# Fixed. There is no HuggingFace or sentence-transformer embedding provider.
+EMBEDDING_PROVIDER = "openai"
 
 
 def _int(name: str, default: int) -> int:
@@ -69,6 +71,7 @@ class Settings:
     answer_mode: str
     retrieve_backend: str
     embedding_model: str
+    embedding_provider: str
     min_score: float
     fetch_k: int
     rewrite_queries: bool
@@ -125,6 +128,7 @@ def get_settings() -> Settings:
         answer_mode=resolve_answer_mode(),
         retrieve_backend=_str("HARBORLINE_RETRIEVE_BACKEND", "pinecone").lower(),
         embedding_model=_str("HARBORLINE_EMBEDDING_MODEL", "text-embedding-3-small"),
+        embedding_provider=EMBEDDING_PROVIDER,
         min_score=_float("HARBORLINE_MIN_SCORE", 0.22),
         fetch_k=_int("HARBORLINE_FETCH_K", 20),
         rewrite_queries=_bool("HARBORLINE_REWRITE", True),

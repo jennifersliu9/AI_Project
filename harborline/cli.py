@@ -129,7 +129,7 @@ def main(argv: list[str] | None = None) -> int:
             f"  vector index: Pinecone namespace {settings.pinecone_namespace} "
             f"({stored} embedded chunks, not loaded into this process)"
         )
-        print(f"  embedding: OpenAI {settings.embedding_model}")
+        print(f"  embedding: OpenAIEmbeddings {settings.embedding_model} (cloud API)")
         return 0
 
     if args.command == "ask":

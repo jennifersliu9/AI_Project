@@ -15,7 +15,9 @@ from harborline.config import get_settings
 from harborline.ingest import Chunk
 from harborline.retrieve import VectorRetriever, build_retriever
 from harborline.store import (
+    OpenAIEmbeddings,
     VectorStoreError,
+    build_embeddings,
     chunk_to_metadata,
     collection_count,
     embed_texts,
@@ -83,6 +85,8 @@ def test_import_store_does_not_load_weight_libraries():
     assert "faiss" not in sys.modules
     assert "fastembed" not in sys.modules
     assert "sentence_transformers" not in sys.modules
+    assert "transformers" not in sys.modules
+    assert "langchain_huggingface" not in sys.modules
 
 
 def test_metadata_roundtrip():
@@ -106,7 +110,6 @@ def test_embed_texts_calls_openai_and_preserves_order(monkeypatch):
     class _Embeddings:
         def create(self, model, input):
             assert model == "text-embedding-3-small"
-            assert input == ["alpha", "beta"]
             data = [_Item(i, [float(i), 1.0]) for i in range(len(input))]
             data.reverse()
             return _EmbedResponse(data)
@@ -123,7 +126,23 @@ def test_embed_texts_calls_openai_and_preserves_order(monkeypatch):
         openai_base_url="https://example.openai.test/v1",
         embedding_model="text-embedding-3-small",
     )
+    embedder = build_embeddings(settings)
+    assert isinstance(embedder, OpenAIEmbeddings)
+    assert embedder.provider == "openai"
+    assert settings.embedding_provider == "openai"
+    assert embedder.embed_documents(["alpha", "beta"]) == [[0.0, 1.0], [1.0, 1.0]]
     assert embed_texts(["alpha", "beta"], settings) == [[0.0, 1.0], [1.0, 1.0]]
+    assert embedder.embed_query("alpha") == [0.0, 1.0]
+
+
+def test_local_embedding_model_is_rejected():
+    settings = _settings(
+        openai_api_key="sk-test",
+        embedding_model="sentence-transformers/all-MiniLM-L6-v2",
+        embedding_provider="openai",
+    )
+    with pytest.raises(VectorStoreError, match="OpenAIEmbeddings"):
+        build_embeddings(settings)
 
 
 def test_embed_texts_requires_api_key():
