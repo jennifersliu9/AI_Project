@@ -2,7 +2,7 @@
 
 Employee Q&A for fictional **Harborline Technologies**. The repo holds a 2026 policy corpus, HarborHub-style employee records, and a seeded retrieval app that answers questions about PTO, holidays, remote work, expenses, security, benefits, onboarding, equipment, leave, and conduct.
 
-Default answer mode is **retrieve-only**. It needs no API key. Set `HARBORLINE_ANSWER_MODE=llm` and `OPENAI_API_KEY` in a local `.env` when you want a model to write the answer. Tickets and emails are session-only mocks; nothing is written to HarborHub or to `data/tickets.json`.
+Default answer mode is **retrieve-only**: retrieval quotes the corpus instead of asking a chat model to write the answer. The default retrieval backend calls OpenAI `text-embedding-3-small` and stores vectors in Pinecone, so `OPENAI_API_KEY` and `PINECONE_API_KEY` are required unless you set `HARBORLINE_RETRIEVE_BACKEND=tfidf`. Set `HARBORLINE_ANSWER_MODE=llm` when you also want a model to write the answer. Tickets and emails are session-only mocks; nothing is written to HarborHub or to `data/tickets.json`.
 
 Deeper references:
 
@@ -26,14 +26,14 @@ Deeper references:
 | EMP-1008 | Alex Kim, software engineer, Tacoma | Hub Seattle at 32 miles; fully remote needs a People Ops reclass |
 | EMP-1014 | Devon Walsh, account executive, started 8 Sep 2026 | PTO not usable until 8 Oct 2026; benefits election still open |
 
-**App.** Heading-aware chunking, local MiniLM embeddings, a FAISS index, query rewrite, lexical rerank, citations, and corpus guardrails. A rule-based HR agent calls eight tools through MCP. FastAPI serves a People Desk chat page plus `/chat`, `/ask`, `/health`, `/demos`, and `/eval`. GitHub Actions installs, starts the app, runs pytest, and deploys only after tests pass.
+**App.** Heading-aware chunking, OpenAI `text-embedding-3-small` embeddings, a hosted Pinecone index, query rewrite, lexical rerank, citations, and corpus guardrails. The Render process does not download sentence-transformer weights or keep the vector index in memory. A rule-based HR agent calls eight tools through MCP. FastAPI serves a People Desk chat page plus `/chat`, `/ask`, `/health`, `/demos`, and `/eval`. GitHub Actions installs, starts the app, runs pytest, and deploys only after tests pass.
 
 ## Architecture
 
 ```
 People Desk UI  /  CLI ask  /  CLI agent  /  POST /chat
         │
-        ├─ ask  → rewrite → retrieve (FAISS or TF-IDF) → rerank → guardrails → cited answer
+        ├─ ask  → rewrite → retrieve (Pinecone or TF-IDF) → rerank → guardrails → cited answer
         │
         └─ agent → intent → MCP tools/list + tools/call
                     │
@@ -107,9 +107,12 @@ cp .env.example .env
 
 | Variable | Required | Default | Purpose |
 | --- | --- | --- | --- |
-| `OPENAI_API_KEY` | Only for LLM answers | empty | Provider key |
+| `OPENAI_API_KEY` | For Pinecone retrieval and LLM answers | empty | Embeddings and optional chat |
 | `OPENAI_MODEL` | No | `gpt-4o-mini` | Chat model |
 | `OPENAI_BASE_URL` | No | OpenAI | Azure or another compatible gateway |
+| `PINECONE_API_KEY` | For Pinecone retrieval | empty | Hosted vector index |
+| `PINECONE_INDEX_HOST` | Host or name | empty | Data-plane host. Or set `PINECONE_INDEX_NAME` |
+| `PINECONE_NAMESPACE` | No | `harborline` | Namespace replaced on ingest |
 | `HARBORLINE_ANSWER_MODE` | No | `retrieve` | `retrieve` or `llm` |
 | `HARBORLINE_SEED` | No | `42` | Eval sampling and LLM seed |
 | `HARBORLINE_CHUNK_SIZE` | No | `900` | Deterministic window |
@@ -119,14 +122,14 @@ cp .env.example .env
 | `HARBORLINE_REWRITE` | No | `true` | Query expansion |
 | `HARBORLINE_RERANK` | No | `true` | Lexical overlap plus diverse sources |
 | `HARBORLINE_MIN_SCORE` | No | `0.22` | Guardrail floor |
-| `HARBORLINE_RETRIEVE_BACKEND` | No | `faiss` | `faiss` or `tfidf` |
-| `HARBORLINE_EMBEDDING_MODEL` | No | `sentence-transformers/all-MiniLM-L6-v2` | Local FastEmbed ONNX model |
+| `HARBORLINE_RETRIEVE_BACKEND` | No | `pinecone` | `pinecone` or `tfidf` |
+| `HARBORLINE_EMBEDDING_MODEL` | No | `text-embedding-3-small` | OpenAI embedding model |
 
 ## RAG pipeline
 
-Activate the virtualenv and run commands from the repo root. No API key is required.
+Activate the virtualenv and run commands from the repo root. The default `pinecone` backend needs `OPENAI_API_KEY` plus `PINECONE_API_KEY` and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). `HARBORLINE_RETRIEVE_BACKEND=tfidf` needs no keys.
 
-**Ingest** parses `corpus/` (Markdown and HTML by heading, PDF by page, TXT by window) and `data/*.json` as structured records. Sections longer than the window are split into 900-character chunks with 120-character overlap. Embeddings are local ONNX **all-MiniLM-L6-v2** (first run downloads into the FastEmbed cache). The index is written to `.cache/faiss` with cosine similarity. Each chunk keeps `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, and ids so `ask` can cite them.
+**Ingest** parses `corpus/` (Markdown and HTML by heading, PDF by page, TXT by window) and `data/*.json` as structured records. Sections longer than the window are split into 900-character chunks with 120-character overlap. Embeddings are OpenAI **text-embedding-3-small**. Vectors are upserted to a Pinecone namespace (cosine, dimension 1536) and are not loaded into this process. Those cosine scores often sit higher than the old local MiniLM scores. The guardrail floor stays `0.22`; raise `HARBORLINE_MIN_SCORE` if unrelated questions start passing it. Each chunk keeps `title`, `section`, `source_path`, `source_format`, `snippet`, `kind`, and ids so `ask` can cite them. Create the index once in Pinecone before the first ingest.
 
 ```bash
 python -m harborline.cli ingest
@@ -144,7 +147,7 @@ python -m harborline.cli ask "I live 32 miles from the Seattle office and want P
 
 Optional filters: `--kind policy`, `--kind structured`, `--source-format md`.
 
-Skipping ingest makes the first `ask` embed on the fly. Set `HARBORLINE_RETRIEVE_BACKEND=tfidf` to skip the embedding model entirely (this is what pytest and CI use).
+Skipping ingest makes the first `ask` embed and upsert on the fly. Set `HARBORLINE_RETRIEVE_BACKEND=tfidf` to skip embeddings and the hosted index entirely (this is what pytest and CI use).
 
 **LLM answers** keep the same retrieval, rewrite, rerank, citations, and guardrails. Put `OPENAI_API_KEY` in `.env`, set `HARBORLINE_ANSWER_MODE=llm`, and rerun `ask`. Temperature is `0` and `seed` is `42`. The written answer is structured as policy fact, citations, and a note that it is not a recommendation. Set `OPENAI_BASE_URL` for Azure or another gateway.
 
@@ -172,7 +175,7 @@ python -m harborline.cli tool create_mock_hr_ticket --topic pto_request --employ
 
 ## People Desk (HTTP)
 
-Run ingest first when the backend is FAISS, then:
+Run ingest once so the Pinecone namespace is populated, then:
 
 ```bash
 uvicorn harborline.api:app --reload --port 8000
@@ -211,7 +214,7 @@ Full write-up: [docs/mcp.md](docs/mcp.md). Server entrypoint: `python -m harborl
 
 `.cursor/mcp.json` already defines two servers:
 
-- `harborline` — stdio via `${workspaceFolder}/.venv/Scripts/python.exe` (Windows). On macOS/Linux change `command` to `${workspaceFolder}/.venv/bin/python`. Env sets retrieve mode and FAISS. `envFile` points at `.env`.
+- `harborline` — stdio via `${workspaceFolder}/.venv/Scripts/python.exe` (Windows). On macOS/Linux change `command` to `${workspaceFolder}/.venv/bin/python`. Env sets the Pinecone retrieve backend. `envFile` points at `.env`.
 - `harborline-http` — Streamable HTTP at `http://127.0.0.1:18765/mcp/`. Start the server on that port yourself if you use this entry (`--port 18765`).
 
 Eight tools: `search_policy_documents`, `get_policy_section`, `check_policy_compliance`, `lookup_employee_profile`, `check_pto_balance`, `lookup_benefits_status`, `create_mock_hr_ticket`, `draft_hr_email`.
@@ -221,7 +224,7 @@ Steps that stay on your machine:
 1. Install dependencies so the Cursor-hosted process can import `mcp` and `harborline`.
 2. Enable MCP in Cursor Settings and allow the `harborline` server.
 3. Restart Cursor after editing `.cursor/mcp.json`.
-4. For FAISS inside that server, run `python -m harborline.cli ingest` once, or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`.
+4. For Pinecone inside that server, put the OpenAI and Pinecone keys in `.env` and run `python -m harborline.cli ingest` once, or set `HARBORLINE_RETRIEVE_BACKEND=tfidf` in `mcp.json`.
 5. For LLM wording, put `OPENAI_API_KEY` in `.env` and set `HARBORLINE_ANSWER_MODE=llm`.
 6. Start Streamable HTTP yourself if you want that transport. The CLI agent does not need Cursor Settings.
 
@@ -238,7 +241,7 @@ python -m harborline.cli report --backend tfidf --write
 pytest
 ```
 
-`cli eval` uses FAISS after ingest. `pytest` and CI use TF-IDF so they stay offline.
+`cli eval` uses Pinecone after ingest. `pytest` and CI use TF-IDF so they stay offline.
 
 ### Latest report
 
@@ -265,7 +268,7 @@ Two policy-QA tasks in that snapshot (`t-pto-tenure`, `t-pto-carryover`) are mar
 
 ## Deployment
 
-The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to FAISS and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`.
+The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to Pinecone and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`. It does not download embedding weights. On Render, set `OPENAI_API_KEY`, `PINECONE_API_KEY`, and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). The index stays in Pinecone across restarts.
 
 ```bash
 docker build -t harborline-qa .
@@ -273,7 +276,7 @@ docker run --rm -p 8000:8000 --env-file .env harborline-qa
 docker run --rm -p 8000:8000 -e HARBORLINE_ANSWER_MODE=retrieve harborline-qa
 ```
 
-For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the service, attach `corpus/`, `data/`, and `eval/`, and keep `HARBORLINE_SEED=42` when you want eval numbers that match local runs.
+For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the service, attach `corpus/`, `data/`, and `eval/`, and keep `HARBORLINE_SEED=42` when you want eval numbers that match local runs. Do not set `HARBORLINE_RETRIEVE_BACKEND=faiss`; that backend has been removed.
 
 ## CI
 
@@ -291,7 +294,8 @@ For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the serv
 | `HARBORLINE_SEED` | 42 | `random`, NumPy, eval sampling, LLM `seed` |
 | `HARBORLINE_CHUNK_SIZE` / `OVERLAP` | 900 / 120 | The same text always yields the same chunks |
 | `PYTHONHASHSEED` | set by `Settings.apply_seeds()` | Stable hashing in-process |
-| FAISS + MiniLM | local ONNX FastEmbed | Persistent vectors in `.cache/faiss` |
+| OpenAI embeddings | `text-embedding-3-small` | No local weight files |
+| Pinecone | hosted cosine index, dimension 1536 | Index is not loaded into process memory |
 | TF-IDF | optional | Stable sort: score descending, `chunk_id` ascending |
 | LLM | temperature 0, seed 42 | Only when `HARBORLINE_ANSWER_MODE=llm` |
 
@@ -301,7 +305,7 @@ For Cloud Run, App Service, Fly.io, or Render, set the same env vars on the serv
 corpus/                  Policies (md, html, txt, pdf) and corpus/README.md
 data/                    Mock offices, employees, PTO, benefits, tickets
 eval/                    gold_questions.json, eval_tasks.json, REPORT.md
-harborline/              Parse, chunk, embed, FAISS, ask, tools, MCP, agent, API, static UI
+harborline/              Parse, chunk, OpenAI embed, Pinecone, ask, tools, MCP, agent, API, static UI
 docs/mcp.md              MCP transport, schemas, discovery
 .cursor/mcp.json         Cursor MCP config (enable the server in Settings)
 scripts/build_pdfs.py    Rebuild the companion PDFs

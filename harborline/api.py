@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 from harborline.agent import run_agent
 from harborline.answer import ask
 from harborline.config import describe_answer_mode, get_settings
+from harborline.store import vector_index_label
 from harborline.demos import DEMOS, get_demo
 from harborline.evaluate import run_eval
 from harborline.retrieve import build_retriever
@@ -104,7 +105,9 @@ def health() -> dict:
         "answer_mode_detail": describe_answer_mode(settings),
         "retrieve_backend": settings.retrieve_backend,
         "embedding_model": settings.embedding_model,
+        "vector_index": vector_index_label(settings),
         "has_openai_key": bool(settings.openai_api_key),
+        "has_pinecone_key": bool(settings.pinecone_api_key),
         "mcp": mcp,
     }
 

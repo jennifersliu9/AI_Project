@@ -20,8 +20,6 @@ dependencies = [
   "starlette==0.46.2",
   "sse-starlette==2.2.1",
   "uvicorn==0.34.2",
-  "faiss-cpu==1.9.0.post1",
-  "fastembed==0.6.1",
   "openai==1.82.0",
   "mcp==1.9.4",
 ]

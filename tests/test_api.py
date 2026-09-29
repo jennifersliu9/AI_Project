@@ -20,6 +20,9 @@ def test_health_includes_mcp():
     body = res.json()
     assert body["app"] == "ok"
     assert body["answer_mode"] == "retrieve"
+    assert body["retrieve_backend"] == "tfidf"
+    assert body["vector_index"] == "local:tfidf"
+    assert body["embedding_model"] == "text-embedding-3-small"
     assert "retrieve" in body["answer_mode_detail"]
     assert "mcp" in body
     assert body["mcp"]["available"] is True
