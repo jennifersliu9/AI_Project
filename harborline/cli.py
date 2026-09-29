@@ -10,7 +10,7 @@ from collections import Counter
 
 from harborline.agent import run_agent
 from harborline.answer import ask
-from harborline.config import get_settings
+from harborline.config import RETRIEVE_BACKENDS, get_settings
 from harborline.benchmark import format_report, run_report
 from harborline.evaluate import run_eval
 from harborline.ingest import load_chunks, write_index
@@ -30,12 +30,16 @@ from harborline.tools import (
 
 
 def _optional_retriever(backend: str | None, settings):
-    chosen = backend or settings.retrieve_backend
+    chosen = (backend or settings.retrieve_backend).lower()
     if chosen == "tfidf":
         from harborline.retrieve import TfidfRetriever
 
         return TfidfRetriever(load_chunks(settings), settings)
-    return None
+    if chosen == "pinecone":
+        from harborline.retrieve import VectorRetriever
+
+        return VectorRetriever(settings)
+    raise ValueError(f"Unknown retrieval backend {chosen!r}. Use pinecone or tfidf.")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -44,7 +48,7 @@ def main(argv: list[str] | None = None) -> int:
 
     sub.add_parser(
         "ingest",
-        help="Parse corpus, chunk, embed with local MiniLM, and store in FAISS",
+        help="Parse corpus, chunk, embed with OpenAI, and upsert to Pinecone",
     )
 
     ask_p = sub.add_parser("ask", help="Retrieve (and optionally generate) an answer")
@@ -69,7 +73,7 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Write eval/latest_report.json and eval/REPORT.md",
     )
-    report_p.add_argument("--backend", choices=["faiss", "tfidf"], default=None)
+    report_p.add_argument("--backend", choices=list(RETRIEVE_BACKENDS), default=None)
 
     tool_p = sub.add_parser(
         "tool",
@@ -86,14 +90,14 @@ def main(argv: list[str] | None = None) -> int:
     tool_p.add_argument("--body", default="")
     tool_p.add_argument("--policy-id", dest="policy_id", default="")
     tool_p.add_argument("--confirm", action="store_true", help="Accept a MOCK write in this process")
-    tool_p.add_argument("--backend", choices=["faiss", "tfidf"], default=None)
+    tool_p.add_argument("--backend", choices=list(RETRIEVE_BACKENDS), default=None)
     tool_p.add_argument("--json", action="store_true")
 
     agent_p = sub.add_parser("agent", help="Run the HR orchestrator through the MCP tool layer")
     agent_p.add_argument("query", help="Employee or HR request")
     agent_p.add_argument("--employee-id", dest="employee_id", default=None)
     agent_p.add_argument("--confirm", action="store_true", help="Accept MOCK irreversible actions")
-    agent_p.add_argument("--backend", choices=["faiss", "tfidf"], default=None)
+    agent_p.add_argument("--backend", choices=list(RETRIEVE_BACKENDS), default=None)
     agent_p.add_argument(
         "--transport",
         choices=["mcp-stdio", "mcp-inproc"],
@@ -104,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
 
     probe_p = sub.add_parser("mcp-probe", help="Discover MCP tools over stdio or in-process FastMCP")
     probe_p.add_argument("--transport", choices=["mcp-stdio", "mcp-inproc"], default="mcp-stdio")
-    probe_p.add_argument("--backend", choices=["faiss", "tfidf"], default=None)
+    probe_p.add_argument("--backend", choices=list(RETRIEVE_BACKENDS), default=None)
 
     args = parser.parse_args(argv)
     settings = get_settings()
@@ -113,13 +117,19 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "ingest":
         chunks = load_chunks(settings)
         json_path = write_index(settings)
-        stored = persist_chunks(chunks, settings)
         formats = Counter(c.source_format for c in chunks)
         print(f"Parsed and chunked {len(chunks)} records")
         print("  formats:", dict(formats))
         print(f"  json index: {json_path}")
-        print(f"  vector index: {settings.vector_dir} ({stored} embedded chunks)")
-        print(f"  embedding: local FastEmbed {settings.embedding_model} (no API key)")
+        if settings.retrieve_backend == "tfidf":
+            print("  vector index: skipped (tfidf backend keeps no hosted index)")
+            return 0
+        stored = persist_chunks(chunks, settings)
+        print(
+            f"  vector index: Pinecone namespace {settings.pinecone_namespace} "
+            f"({stored} embedded chunks, not loaded into this process)"
+        )
+        print(f"  embedding: OpenAI {settings.embedding_model}")
         return 0
 
     if args.command == "ask":

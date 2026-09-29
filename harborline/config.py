@@ -14,8 +14,9 @@ from dotenv import load_dotenv
 ROOT = Path(__file__).resolve().parents[1]
 
 load_dotenv(ROOT / ".env")
-os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
-os.environ.setdefault("FASTEMBED_CACHE_PATH", str(ROOT / ".cache" / "fastembed"))
+
+# pinecone: OpenAI embeddings + hosted index. tfidf: offline, no API keys.
+RETRIEVE_BACKENDS = ("pinecone", "tfidf")
 
 
 def _int(name: str, default: int) -> int:
@@ -75,12 +76,16 @@ class Settings:
     openai_api_key: str | None
     openai_model: str
     openai_base_url: str | None
+    pinecone_api_key: str | None
+    pinecone_index_host: str | None
+    pinecone_index_name: str | None
+    pinecone_namespace: str
+    pinecone_api_version: str
     root: Path
     corpus_dir: Path
     data_dir: Path
     eval_path: Path
     cache_dir: Path
-    vector_dir: Path
 
     def apply_seeds(self) -> None:
         """Fix process-wide RNGs used for evaluation sampling."""
@@ -118,11 +123,8 @@ def get_settings() -> Settings:
         chunk_overlap=_int("HARBORLINE_CHUNK_OVERLAP", 120),
         top_k=_int("HARBORLINE_TOP_K", 5),
         answer_mode=resolve_answer_mode(),
-        retrieve_backend=_str("HARBORLINE_RETRIEVE_BACKEND", "faiss").lower(),
-        embedding_model=_str(
-            "HARBORLINE_EMBEDDING_MODEL",
-            "sentence-transformers/all-MiniLM-L6-v2",
-        ),
+        retrieve_backend=_str("HARBORLINE_RETRIEVE_BACKEND", "pinecone").lower(),
+        embedding_model=_str("HARBORLINE_EMBEDDING_MODEL", "text-embedding-3-small"),
         min_score=_float("HARBORLINE_MIN_SCORE", 0.22),
         fetch_k=_int("HARBORLINE_FETCH_K", 20),
         rewrite_queries=_bool("HARBORLINE_REWRITE", True),
@@ -130,10 +132,14 @@ def get_settings() -> Settings:
         openai_api_key=key,
         openai_model=_str("OPENAI_MODEL", "gpt-4o-mini"),
         openai_base_url=os.getenv("OPENAI_BASE_URL") or None,
+        pinecone_api_key=(os.getenv("PINECONE_API_KEY") or "").strip() or None,
+        pinecone_index_host=(os.getenv("PINECONE_INDEX_HOST") or "").strip() or None,
+        pinecone_index_name=(os.getenv("PINECONE_INDEX_NAME") or "").strip() or None,
+        pinecone_namespace=_str("PINECONE_NAMESPACE", "harborline"),
+        pinecone_api_version=_str("PINECONE_API_VERSION", "2025-04"),
         root=ROOT,
         corpus_dir=ROOT / "corpus",
         data_dir=ROOT / "data",
         eval_path=ROOT / "eval" / "gold_questions.json",
         cache_dir=ROOT / ".cache",
-        vector_dir=ROOT / ".cache" / "faiss",
     )

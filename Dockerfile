@@ -7,7 +7,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONHASHSEED=42 \
     HARBORLINE_SEED=42 \
     HARBORLINE_ANSWER_MODE=retrieve \
-    HARBORLINE_RETRIEVE_BACKEND=faiss
+    HARBORLINE_RETRIEVE_BACKEND=pinecone \
+    HARBORLINE_EMBEDDING_MODEL=text-embedding-3-small
 
 COPY requirements.txt pyproject.toml README.md ./
 COPY harborline ./harborline

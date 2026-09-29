@@ -1,4 +1,4 @@
-"""Retrieval: FAISS vector search by default, TF-IDF as a no-download fallback."""
+"""Retrieval: hosted Pinecone by default, TF-IDF as an offline fallback."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from sklearn.metrics.pairwise import cosine_similarity
 
 from harborline.config import Settings, get_settings
 from harborline.ingest import Chunk, load_chunks
-from harborline.store import collection_count, load_index, metadata_to_chunk, persist_chunks
+from harborline.store import collection_count, metadata_to_chunk, persist_chunks
 
 
 @dataclass(frozen=True)
@@ -76,11 +76,12 @@ class TfidfRetriever:
 
 
 class VectorRetriever:
+    """Search Pinecone. This object does not hold the corpus index."""
+
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
         if collection_count(self.settings) == 0:
             persist_chunks(load_chunks(self.settings), self.settings)
-        self.index, self.records = load_index(self.settings)
 
     def search(
         self,
@@ -90,20 +91,17 @@ class VectorRetriever:
         kind: str | None = None,
         source_format: str | None = None,
     ) -> list[Hit]:
-        from harborline.store import embed_texts
+        from harborline.store import embed_texts, query_vectors
 
         k = top_k or self.settings.top_k
-        fetch = min(max(k * 4, k), len(self.records) or 1)
         q = query.strip()
         if employee_id:
             q = f"{q} employee_id {employee_id}"
         qvec = embed_texts([q], self.settings)
-        scores, indices = self.index.search(qvec, fetch)
+        fetch = max(k * 4, k)
         hits: list[Hit] = []
-        for score, row in zip(scores[0], indices[0]):
-            if int(row) < 0:
-                continue
-            chunk = metadata_to_chunk(self.records[int(row)])
+        for score, meta in query_vectors(qvec[0], fetch, self.settings):
+            chunk = metadata_to_chunk(meta)
             if not _keep_hit(chunk, employee_id, kind, source_format):
                 continue
             hits.append(Hit(score=float(score), chunk=chunk))
@@ -114,9 +112,21 @@ class VectorRetriever:
 
 def build_retriever(settings: Settings | None = None):
     settings = settings or get_settings()
-    if settings.retrieve_backend == "tfidf":
+    backend = settings.retrieve_backend
+    if backend == "tfidf":
         return TfidfRetriever(load_chunks(settings), settings)
-    return VectorRetriever(settings)
+    if backend == "pinecone":
+        return VectorRetriever(settings)
+    if backend == "faiss":
+        raise ValueError(
+            "HARBORLINE_RETRIEVE_BACKEND=faiss has been removed. "
+            "This process no longer downloads sentence-transformer weights or "
+            "loads a FAISS index into memory. Use pinecone "
+            "(OpenAI text-embedding-3-small + a hosted Pinecone index) or tfidf."
+        )
+    raise ValueError(
+        f"Unknown HARBORLINE_RETRIEVE_BACKEND={backend!r}. Use pinecone or tfidf."
+    )
 
 
 # Back-compat alias used in older tests/docs
