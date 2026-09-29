@@ -268,7 +268,7 @@ Two policy-QA tasks in that snapshot (`t-pto-tenure`, `t-pto-carryover`) are mar
 
 ## Deployment
 
-The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to Pinecone and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`. It does not download embedding weights. On Render, set `OPENAI_API_KEY`, `PINECONE_API_KEY`, and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). The index stays in Pinecone across restarts.
+The image serves FastAPI. Pass secrets at runtime. Do not bake keys into the image. The image defaults to Pinecone and retrieve mode, and it copies `corpus/`, `data/`, and `eval/`. It does not download embedding weights. On Render, set `OPENAI_API_KEY`, `PINECONE_API_KEY`, and `PINECONE_INDEX_HOST` (or `PINECONE_INDEX_NAME`). The index stays in Pinecone across restarts. `/health` reports `has_pinecone_key`, `has_pinecone_host`, the normalized `pinecone_index_host`, and `hosted_index`. `local_vector_index` is false: those settings do not build a local vector index. Explicit `HARBORLINE_RETRIEVE_BACKEND=tfidf` still uses lexical search and ignores the hosted index.
 
 ```bash
 docker build -t harborline-qa .
