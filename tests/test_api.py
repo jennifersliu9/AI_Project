@@ -20,6 +20,7 @@ def test_health_includes_mcp():
     body = res.json()
     assert body["app"] == "ok"
     assert body["answer_mode"] == "retrieve"
+    assert body["llm_answers"] is False
     assert body["retrieve_backend"] == "tfidf"
     assert body["vector_index"] == "local:tfidf"
     assert body["has_pinecone_key"] is False
